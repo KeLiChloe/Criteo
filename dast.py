@@ -111,10 +111,10 @@ class DASTree:
             raise RuntimeError("Call build() before prune_to_M().")
 
         current_leaves = self._get_leaf_nodes()
-        # if len(current_leaves) < M:
-        #     raise ValueError(
-        #         f"Current leaf count ({len(current_leaves)}) < target M ({M})."
-        #     )
+        if len(current_leaves) < M:
+            raise ValueError(
+                f"Current leaf count ({len(current_leaves)}) < target M ({M})."
+            )
 
         while len(current_leaves) > M:
             # 所有「左右子节点都是叶子」的内部节点

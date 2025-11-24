@@ -1,5 +1,8 @@
 # data_utils.py
 from sklearn.model_selection import train_test_split
+from sklift.datasets import fetch_criteo
+from outcome_model import fit_mu_models, predict_mu
+import numpy as np
 
 def split_pilot_impl(X, D, y, pilot_frac=0.7, random_state=0):
     """
@@ -84,3 +87,94 @@ def split_seg_train_test(X_pilot, D_pilot, y_pilot,
         y_te = y_te.values
     
     return (X_tr, D_tr, y_tr), (X_te, D_te, y_te)
+
+
+
+# =========================================================
+# 0. 数据加载 & 探索
+# =========================================================
+def load_criteo(sample_frac, random_state=None):
+    print("Loading Criteo uplift dataset ...")
+    X, y, D = fetch_criteo(
+        target_col="conversion",
+        treatment_col="treatment",
+        percent10=True,
+        return_X_y_t=True,
+    )
+
+    np.random.seed(random_state)
+
+    n_samples = int(len(X) * sample_frac)
+    indices = np.random.choice(len(X), size=n_samples, replace=False)
+    X, y, D = X.iloc[indices], y.iloc[indices], D.iloc[indices]
+
+    X = X.reset_index(drop=True)
+    y = y.reset_index(drop=True)
+    D = D.reset_index(drop=True)
+
+    print("\n" + "=" * 60)
+    print("DATA EXPLORATION")
+    print("=" * 60)
+
+    print("\n Basic Information:")
+    print(f"   X shape: {X.shape} (n={X.shape[0]}, d={X.shape[1]})")
+
+    print("\n Outcome by Treatment:")
+    y_control = y[D == 0]
+    y_treated = y[D == 1]
+    print(f"   Control (D=0) - mean: {y_control.mean():.6f}, std: {y_control.std():.6f}")
+    print(f"   Treated (D=1) - mean: {y_treated.mean():.6f}, std: {y_treated.std():.6f}")
+    print(f"   Naive ATE: {y_treated.mean() - y_control.mean():.6f}")
+
+    # 转成 numpy
+    X_np = X.values
+    y_np = y.values
+    D_np = D.values
+
+    return X_np, y_np, D_np
+
+
+# =========================================================
+# 1. pilot / implementation 划分 + outcome model + Gamma
+# =========================================================
+def prepare_pilot_impl(X, y, D, pilot_frac=0.3):
+    print("\n" + "=" * 60)
+    print("STEP 1–3: Split & fit outcome models")
+    print("=" * 60)
+
+    X_pilot, X_impl, D_pilot, D_impl, y_pilot, y_impl = split_pilot_impl(
+        X, D, y, pilot_frac=pilot_frac
+    )
+    print(f"Pilot size: {len(X_pilot)}, Implementation size: {len(X_impl)}")
+
+    print("\nFitting outcome models (mu1, mu0) on pilot...")
+    mu1_pilot_model, mu0_pilot_model = fit_mu_models(
+        X_pilot, D_pilot, y_pilot, model_type="logistic"
+    )
+    e_pilot = D_pilot.mean()
+    print(f"Propensity score e: {e_pilot:.3f}")
+
+    print("Computing pseudo-outcomes (Gamma) on pilot data...")
+    mu1_pilot = predict_mu(mu1_pilot_model, X_pilot)
+    mu0_pilot = predict_mu(mu0_pilot_model, X_pilot)
+
+    Gamma1_pilot = mu1_pilot + (D_pilot / e_pilot) * (y_pilot - mu1_pilot)
+    Gamma0_pilot = mu0_pilot + ((1 - D_pilot) / (1 - e_pilot)) * (y_pilot - mu0_pilot)
+    Gamma_pilot = np.vstack([Gamma0_pilot, Gamma1_pilot]).T
+    print("Pseudo-outcomes computed.")
+
+    return (
+        X_pilot,
+        X_impl,
+        D_pilot,
+        D_impl,
+        y_pilot,
+        y_impl,
+        mu1_pilot_model,
+        mu0_pilot_model,
+        e_pilot,
+        Gamma1_pilot,
+        Gamma0_pilot,
+        Gamma_pilot,
+    )
+

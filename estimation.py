@@ -39,9 +39,7 @@ def estimate_segment_policy(X, y, D, seg_labels):
         
         if n_seg < 2:
             # Not enough samples in segment, set tau to 0
-            tau_hat[m] = 0.0
-            action[m] = 0
-            continue
+            raise ValueError(f"Segment {m} has less than 2 samples")
         
         # Get data for this segment
         X_m = X[idx]
