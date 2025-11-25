@@ -3,6 +3,7 @@ from sklearn.model_selection import train_test_split
 from sklift.datasets import fetch_criteo
 from outcome_model import fit_mu_models, predict_mu
 import numpy as np
+from sklearn.preprocessing import StandardScaler
 
 def split_pilot_impl(X, D, y, pilot_frac=0.7, random_state=0):
     """
@@ -125,12 +126,21 @@ def load_criteo(sample_frac, random_state=None):
     print(f"   Control (D=0) - mean: {y_control.mean():.6f}, std: {y_control.std():.6f}")
     print(f"   Treated (D=1) - mean: {y_treated.mean():.6f}, std: {y_treated.std():.6f}")
     print(f"   Naive ATE: {y_treated.mean() - y_control.mean():.6f}")
+    
+    # print ratio of treatment assignment (D=1) and positive outcomes
+    print("\n Treatment Assignment:")
+    print(f"   Treatment (D=1) ratio: {D.mean():.6f}")
+    print(f"   Positive Outcome (y=1) ratio: {y.mean():.6f}")
 
     # 转成 numpy
     X_np = X.values
     y_np = y.values
     D_np = D.values
 
+    # scale X features
+    # scaler = StandardScaler()
+    # X_np = scaler.fit_transform(X_np)
+    
     return X_np, y_np, D_np
 
 
@@ -173,8 +183,6 @@ def prepare_pilot_impl(X, y, D, pilot_frac=0.3):
         mu1_pilot_model,
         mu0_pilot_model,
         e_pilot,
-        Gamma1_pilot,
-        Gamma0_pilot,
         Gamma_pilot,
     )
 

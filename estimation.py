@@ -35,38 +35,15 @@ def estimate_segment_policy(X, y, D, seg_labels):
     
     for m in range(M):
         idx = (seg_labels == m)
-        n_seg = idx.sum()
         
-        if n_seg < 2:
-            # Not enough samples in segment, set tau to 0
-            raise ValueError(f"Segment {m} has less than 2 samples")
-        
-        # Get data for this segment
-        X_m = X[idx]
-        y_m = y[idx]
-        D_m = D[idx]
-        
-        # Check if we have both treatments in this segment
-        n_treated = (D_m == 1).sum()
-        n_control = (D_m == 0).sum()
-        
-        if n_treated == 0 or n_control == 0:
-            raise ValueError(f"Segment {m} has no treated or control samples")
-        
-        # Prepare design matrix: [1, X, D]
-        # Shape: (n_seg, 1 + d + 1)
-        X_design = np.column_stack([
-            np.ones(n_seg),  # intercept
-            X_m,             # features
-            D_m              # treatment indicator
-        ])
-        
-        # Fit linear regression: y = alpha + beta * X + tau * D
-        reg = LinearRegression(fit_intercept=False)  # We already have intercept column
-        reg.fit(X_design, y_m)
+        # use the diffs in means (y) to estimate tau_hat
+        y_seg = y[idx]
+        y_0 = y_seg[D[idx] == 0]
+        y_1 = y_seg[D[idx] == 1]
+        tau_hat[m] = y_1.mean() - y_0.mean()
         
         # Extract tau (coefficient for D, which is the last column)
-        tau_hat[m] = reg.coef_[-1]
+        
         action[m] = 1 if tau_hat[m] > 0 else 0
     
     return tau_hat, action

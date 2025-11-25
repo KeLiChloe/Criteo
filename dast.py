@@ -101,62 +101,58 @@ class DASTree:
 
     def prune_to_M(self, M: int):
         """
-        Post-prune tree to have exactly M leaves (Algorithm 2,但不做参数估计).
-
-        After this call:
-        - self.leaf_nodes: list of leaf nodes
-        - each leaf node has .segment_id ∈ {0, …, M-1}
+        Post-prune tree to have exactly M leaves (Algorithm 2).
         """
+
         if self.root is None:
-            raise RuntimeError("Call build() before prune_to_M().")
+            raise RuntimeError("Call build() first.")
 
         current_leaves = self._get_leaf_nodes()
-        if len(current_leaves) < M:
-            raise ValueError(
-                f"Current leaf count ({len(current_leaves)}) < target M ({M})."
-            )
 
         while len(current_leaves) > M:
-            # 所有「左右子节点都是叶子」的内部节点
             prunable_nodes = self._get_internal_nodes_with_leaf_children()
             if not prunable_nodes:
                 break
 
-            # 对每个候选节点计算 ΔV_L = (V_L + V_R) - V_C
             best_node = None
-            best_delta = np.inf
-            best_variance_increase = np.inf
+            best_deltaV = -np.inf       # maximize ΔV = V_C - (V_L + V_R)
+            best_var_increase = np.inf  # tie-breaker: smaller variance increase
 
             for node in prunable_nodes:
-                # 使用缓存的 node.value 提高效率
-                V_L = node.left.value if node.left.value is not None else self._compute_node_value(node.left.indices)
-                V_R = node.right.value if node.right.value is not None else self._compute_node_value(node.right.indices)
-                V_C = node.value if node.value is not None else self._compute_node_value(node.indices)
-                delta = (V_L + V_R) - V_C  # Algorithm 2, line 10
 
-                # tie-breaking: variance increase 较小者优先
-                if delta < best_delta - self.tolerance_pruning:
-                    best_delta = delta
+                V_C = node.value
+                V_L = node.left.value
+                V_R = node.right.value
+
+                deltaV = V_C - (V_L + V_R)
+
+                # 1) main criterion: maximize deltaV
+                if deltaV > best_deltaV + self.tolerance_pruning:
+                    best_deltaV = deltaV
                     best_node = node
-                    best_variance_increase = self._compute_variance_after_pruning(node)
-                elif abs(delta - best_delta) <= self.tolerance_pruning:
+                    best_var_increase = self._compute_variance_after_pruning(node)
+
+                elif abs(deltaV - best_deltaV) <= self.tolerance_pruning:
+                    # 2) tie-breaker: minimize variance increase
                     var_inc = self._compute_variance_after_pruning(node)
-                    if var_inc < best_variance_increase:
-                        best_variance_increase = var_inc
+                    if var_inc < best_var_increase:
                         best_node = node
+                        best_var_increase = var_inc
 
             if best_node is None:
                 break
 
-            # 真正执行 prune
+            # perform prune
             best_node.prune()
             current_leaves = self._get_leaf_nodes()
 
+        # update leaf_nodes
         self.leaf_nodes = current_leaves
 
-        # 重新编号 segment_id
+        # assign segment IDs
         for seg_id, node in enumerate(self.leaf_nodes):
             node.segment_id = seg_id
+
 
     def assign(self, X: np.ndarray) -> np.ndarray:
         """
@@ -203,7 +199,7 @@ class DASTree:
 
         # 找到最大的 gain，用于和 epsilon 比较
         max_gain = max(g for (g, _, _, _, _) in gain_splits)
-        if max_gain <= self.epsilon:
+        if max_gain < self.epsilon:
             # Algorithm 1: if bestGain ≤ ε, TerminateNode
             self.leaf_nodes.append(node)
             return node
