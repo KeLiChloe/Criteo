@@ -11,7 +11,7 @@ from dast import DASTree  # 确保 dast.py 在同一目录下
 def simulate_data(
     n_per_cluster=300,
     d=1,
-    sigma_x=0.4,
+    sigma_x=2,
     sigma_eps=0.5,
     seed=42,
 ):
@@ -25,7 +25,7 @@ def simulate_data(
     rng = np.random.RandomState(seed)
 
     K = 3  # 3 clusters
-    means_x = [-5.0, 0.0, 10.0]
+    means_x = [-5.0, 5, 10.0]
     alphas = rng.normal(0.0, 1.0, size=K)
     betas = rng.normal(1.0, 0.3, size=K)
     taus = [2.0, -1.0, -3.0]  # treatment effects
@@ -142,13 +142,32 @@ def main():
     # 3. 构造 DAST
     d_full = X.shape[1]
     # Generate candidate thresholds (midpoints between unique values)
+    # Generate candidate thresholds (midpoints between unique values)
+    bins = 64  # 每个特征最多 64 个候选阈值
     H_full = {}
+
     for j in range(d_full):
-        sorted_values = np.sort(np.unique(X[:, j]))
-        if len(sorted_values) > 1:
-            H_full[j] = (sorted_values[:-1] + sorted_values[1:]) / 2.0
+        col = X[:, j]
+        # 去掉nan的话可以先 col = col[~np.isnan(col)]
+        unique_values = np.unique(col)
+
+        if len(unique_values) <= 1:
+            H_full[j] = unique_values
         else:
-            H_full[j] = sorted_values
+            # 如果 unique 太多，只取 K+1 个“代表点”，再在中间算 midpoints
+            if len(unique_values) > bins + 1:
+                # 取 K+1 个分位数，比如 [0, 1/K, 2/K, ..., 1]
+                qs = np.linspace(0, 1, num=bins+1)
+                # 用 quantile 近似 unique-values 的分布
+                grid = np.quantile(col, qs)
+                grid = np.unique(grid)  # 可能有重复
+            else:
+                grid = unique_values
+
+            if len(grid) > 1:
+                H_full[j] = (grid[:-1] + grid[1:]) / 2.0
+            else:
+                H_full[j] = grid
 
     tree = DASTree(
         x=X,

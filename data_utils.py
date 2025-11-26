@@ -5,7 +5,7 @@ from outcome_model import fit_mu_models, predict_mu
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 
-def split_pilot_impl(X, D, y, pilot_frac=0.7, random_state=0):
+def split_pilot_impl(X, D, y, pilot_frac, random_state=0):
     """
     Full data → pilot + implementation
     """
@@ -94,20 +94,25 @@ def split_seg_train_test(X_pilot, D_pilot, y_pilot,
 # =========================================================
 # 0. 数据加载 & 探索
 # =========================================================
-def load_criteo(sample_frac, random_state=None):
+def load_criteo(sample_frac, seed):
+    np.random.seed(seed)
     print("Loading Criteo uplift dataset ...")
+    print("(Using random seed =", seed, ")")
+    
     X, y, D = fetch_criteo(
         target_col="conversion",
         treatment_col="treatment",
         percent10=True,
         return_X_y_t=True,
     )
-
-    np.random.seed(random_state)
+    
 
     n_samples = int(len(X) * sample_frac)
     indices = np.random.choice(len(X), size=n_samples, replace=False)
     X, y, D = X.iloc[indices], y.iloc[indices], D.iloc[indices]
+    
+    # print posit=iive ratio of y
+    print(f"Positive ratio of y: {y.mean():.6f}")
 
     X = X.reset_index(drop=True)
     y = y.reset_index(drop=True)
@@ -147,7 +152,7 @@ def load_criteo(sample_frac, random_state=None):
 # =========================================================
 # 1. pilot / implementation 划分 + outcome model + Gamma
 # =========================================================
-def prepare_pilot_impl(X, y, D, pilot_frac=0.3):
+def prepare_pilot_impl(X, y, D, pilot_frac):
     print("\n" + "=" * 60)
     print("STEP 1–3: Split & fit outcome models")
     print("=" * 60)

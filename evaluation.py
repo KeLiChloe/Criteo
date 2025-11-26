@@ -201,12 +201,15 @@ def evaluate_all_policies(
     D_impl,
     seg_labels_impl_kmeans,
     seg_labels_impl_gmm,
+    seg_labels_impl_clr,
     seg_labels_impl_dast,
+    
     mu1_pilot_model,
     mu0_pilot_model,
     e_pilot,
     action_kmeans,
     action_gmm,
+    action_clr,
     action_dast,
 ):
     print("\n" + "="*60)
@@ -263,6 +266,14 @@ def evaluate_all_policies(
         mu0_pilot_model,
         action_gmm,
         e_pilot,
+    )
+    
+    val_clr = evaluate_policy(
+        X_impl, D_impl, y_impl,
+        seg_labels_impl_clr,
+        mu1_pilot_model, mu0_pilot_model,
+        action_clr,
+        e_pilot
     )
 
     # DAST policy

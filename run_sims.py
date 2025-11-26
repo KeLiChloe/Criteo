@@ -1,21 +1,6 @@
 # exp_sim.py
 """
-多次重复 Criteo 实验，并保存每次各算法的 value_mean 到 pkl。
-
-- 每一轮：
-    1) 用一个新的 random_state 调用 load_criteo(sample_frac=0.03, random_state=seed)
-    2) prepare_pilot_impl → 得到 pilot / impl, mu1/mu0, Gamma_pilot, e_pilot
-    3) 跑 KMeans / GMM / DAST（用你已有的 run_xxx_segmentation, run_dast_dams）
-    4) 用 estimate_segment_policy + evaluate_policy 计算：
-        - Baseline: All Treat
-        - Baseline: All Control
-        - Baseline: Random (按 e_pilot 随机 treat)
-        - KMeans policy
-        - GMM policy
-        - DAST policy
-    5) 把本轮结果（一个 dict） append 到列表，并立刻 pickle.dump 覆盖保存
-
-结果文件：比如 "criteo_sim_results.pkl"
+多次重复 Criteo 实验，并保存每次各算法（包括 CLR）的 value_mean 到 pkl。
 """
 
 import numpy as np
@@ -29,249 +14,332 @@ from segmentation import (
     run_kmeans_segmentation,
     run_gmm_segmentation,
     run_dast_dams,
+    run_clr_segmentation,   
+    run_mst_dams,    
+    run_policytree_segmentation,
 )
 
+import time  
 
-def run_single_experiment(sample_frac=0.03, pilot_frac=0.4, seed=None):
-    """
-    跑一轮完整实验，返回一个 dict，里面放所有算法的 value_mean。
-    """
+ALGO_LIST = ["kmeans", "gmm", "clr", "dast", "mst"]  # 可选算法列表，包含 CLR
+# good seed: 380776, 458676
 
-    if seed is None:
-        seed = np.random.randint(0, 1_000_000)
-    print("\n" + "=" * 60)
-    print(f"▶ Running one experiment with seed = {seed}")
-    print("=" * 60)
+def run_single_experiment(sample_frac, pilot_frac):
 
     # --------------------------------------------------
-    # 0. Load Criteo 子样本
+    # 0. Load data
     # --------------------------------------------------
-    X, y, D = load_criteo(sample_frac=sample_frac, random_state=seed)
+    seed = np.random.randint(0, 1_000_000)
+    X, y, D = load_criteo(sample_frac=sample_frac, seed=seed)
 
     # --------------------------------------------------
-    # 1–3. pilot / impl + outcome models + Gamma
+    # 1–3. pilot + outcome models
     # --------------------------------------------------
     (
-        X_pilot,
-        X_impl,
-        D_pilot,
-        D_impl,
-        y_pilot,
-        y_impl,
-        mu1_pilot_model,
-        mu0_pilot_model,
-        e_pilot,
-        Gamma_pilot,
+        X_pilot, X_impl,
+        D_pilot, D_impl,
+        y_pilot, y_impl,
+        mu1_pilot_model, mu0_pilot_model,
+        e_pilot, Gamma_pilot
     ) = prepare_pilot_impl(X, y, D, pilot_frac=pilot_frac)
 
-    # --------------------------------------------------
-    # 4a. KMeans segmentation
-    # --------------------------------------------------
-    kmeans_seg, seg_labels_pilot_kmeans, best_K_kmeans = run_kmeans_segmentation(
-        X_pilot, D_pilot, y_pilot, K_candidates=[2, 3, 4]
-    )
-
-    # --------------------------------------------------
-    # 4b. GMM segmentation
-    # --------------------------------------------------
-    gmm_seg, seg_labels_pilot_gmm, best_K_gmm = run_gmm_segmentation(
-        X_pilot, D_pilot, y_pilot, K_candidates=[2, 3, 4, 5, 6]
-    )
-
-    # --------------------------------------------------
-    # 5–6. DAST + DAMS
-    # --------------------------------------------------
-    (
-        tree_final,
-        seg_labels_pilot_dast,
-        best_M_dast,
-        best_action_dast_train,  # just for sanity check
-    ) = run_dast_dams(
-        X_pilot,
-        D_pilot,
-        y_pilot,
-        mu1_pilot_model,
-        mu0_pilot_model,
-        e_pilot,
-        Gamma_pilot,
-        train_frac=0.5,
-        M_candidates=(2, 3, 4, 5, 6),
-        min_leaf_size=5,
-    )
-
-    # --------------------------------------------------
-    # 7. 估计 segment-level policy（diff-in-means on y）
-    # --------------------------------------------------
-    tau_kmeans, action_kmeans = estimate_segment_policy(
-        X_pilot, y_pilot, D_pilot, seg_labels_pilot_kmeans
-    )
-    tau_gmm, action_gmm = estimate_segment_policy(
-        X_pilot, y_pilot, D_pilot, seg_labels_pilot_gmm
-    )
-    tau_dast, action_dast = estimate_segment_policy(
-        X_pilot, y_pilot, D_pilot, seg_labels_pilot_dast
-    )
-
-    # --------------------------------------------------
-    # 8. Implementation assignment
-    # --------------------------------------------------
-    seg_labels_impl_kmeans = kmeans_seg.assign(X_impl)
-    seg_labels_impl_gmm = gmm_seg.assign(X_impl)
-    seg_labels_impl_dast = tree_final.assign(X_impl)
-
-    # --------------------------------------------------
-    # 9. Baselines + algorithm policies: evaluate on impl
-    # --------------------------------------------------
-    from evaluation import evaluate_policy  # already imported above, just to be clear
-
-    # Baseline: All Treat
-    seg_labels_all_treat = np.zeros(len(X_impl), dtype=int)  # all in segment 0
-    action_all_treat = np.array([1])  # segment 0 → treat
-    value_all_treat = evaluate_policy(
-        X_impl,
-        D_impl,
-        y_impl,
-        seg_labels_all_treat,
-        mu1_pilot_model,
-        mu0_pilot_model,
-        action_all_treat,
-        e_pilot,
-    )
-
-    # Baseline: All Control
-    seg_labels_all_control = np.zeros(len(X_impl), dtype=int)
-    action_all_control = np.array([0])
-    value_all_control = evaluate_policy(
-        X_impl,
-        D_impl,
-        y_impl,
-        seg_labels_all_control,
-        mu1_pilot_model,
-        mu0_pilot_model,
-        action_all_control,
-        e_pilot,
-    )
-
-    # Baseline: Random (按 e_pilot 概率 treat)
-    # 做法：segment=0 表示控制段，segment=1 表示处理段；action=[0,1]
-    seg_labels_random = np.random.binomial(1, e_pilot, size=len(X_impl))
-    action_random = np.array([0, 1])
-    value_random = evaluate_policy(
-        X_impl,
-        D_impl,
-        y_impl,
-        seg_labels_random,
-        mu1_pilot_model,
-        mu0_pilot_model,
-        action_random,
-        e_pilot,
-    )
-
-    # KMeans policy
-    value_kmeans = evaluate_policy(
-        X_impl,
-        D_impl,
-        y_impl,
-        seg_labels_impl_kmeans,
-        mu1_pilot_model,
-        mu0_pilot_model,
-        action_kmeans,
-        e_pilot,
-    )
-
-    # GMM policy
-    value_gmm = evaluate_policy(
-        X_impl,
-        D_impl,
-        y_impl,
-        seg_labels_impl_gmm,
-        mu1_pilot_model,
-        mu0_pilot_model,
-        action_gmm,
-        e_pilot,
-    )
-
-    # DAST policy
-    value_dast = evaluate_policy(
-        X_impl,
-        D_impl,
-        y_impl,
-        seg_labels_impl_dast,
-        mu1_pilot_model,
-        mu0_pilot_model,
-        action_dast,
-        e_pilot,
-    )
-
-    # --------------------------------------------------
-    # 打个 summary，顺便返回 v_mean
-    # --------------------------------------------------
-    res = {
+    # storage for output
+    results = {
         "seed": int(seed),
-        "e_pilot": float(e_pilot),
-        "all_treat": float(value_all_treat["value_mean"]),
-        "all_control": float(value_all_control["value_mean"]),
-        "random": float(value_random["value_mean"]),
-        "kmeans": float(value_kmeans["value_mean"]),
-        "gmm": float(value_gmm["value_mean"]),
-        "dast": float(value_dast["value_mean"]),
+        "e_pilot": float(e_pilot)
     }
 
-    print("\nResult for this run (value_mean):")
-    for k, v in res.items():
-        if k in ["seed", "e_pilot"]:
-            print(f"  {k}: {v}")
-        else:
-            print(f"  {k:12s}: {v:.6f}")
+    # --------------------------------------------------
+    # Baselines — Always run
+    # --------------------------------------------------
+    seg_labels_all_treat = np.zeros(len(X_impl), dtype=int)
+    value_all_treat = evaluate_policy(
+        X_impl, D_impl, y_impl,
+        seg_labels_all_treat,
+        mu1_pilot_model, mu0_pilot_model,
+        np.array([1]), e_pilot
+    )
+    results["all_treat"] = float(value_all_treat["value_mean"])
 
-    return res
+    seg_labels_all_control = np.zeros(len(X_impl), dtype=int)
+    value_all_control = evaluate_policy(
+        X_impl, D_impl, y_impl,
+        seg_labels_all_control,
+        mu1_pilot_model, mu0_pilot_model,
+        np.array([0]), e_pilot
+    )
+    results["all_control"] = float(value_all_control["value_mean"])
 
+    seg_labels_random = np.random.binomial(1, e_pilot, size=len(X_impl))
+    value_random = evaluate_policy(
+        X_impl, D_impl, y_impl,
+        seg_labels_random,
+        mu1_pilot_model, mu0_pilot_model,
+        np.array([0, 1]), e_pilot
+    )
+    results["random"] = float(value_random["value_mean"])
+
+
+    # --------------------------------------------------
+    # 4a. KMeans
+    # --------------------------------------------------
+    if "kmeans" in ALGO_LIST:
+        t0 = time.perf_counter()
+        kmeans_seg, seg_labels_pilot_kmeans, best_K_kmeans = run_kmeans_segmentation(
+            X_pilot, D_pilot, y_pilot, K_candidates=[2, 3, 4, 5, 6, 7, 8]
+        )
+        tau_kmeans, action_kmeans = estimate_segment_policy(
+            X_pilot, y_pilot, D_pilot, seg_labels_pilot_kmeans
+        )
+        seg_labels_impl_kmeans = kmeans_seg.assign(X_impl)
+        value_kmeans = evaluate_policy(
+            X_impl, D_impl, y_impl,
+            seg_labels_impl_kmeans,
+            mu1_pilot_model, mu0_pilot_model,
+            action_kmeans, e_pilot
+        )
+        t1 = time.perf_counter()
+        results["kmeans"] = float(value_kmeans["value_mean"])
+        results["time_kmeans"] = float(t1 - t0)   # 👈 记录时间（单位秒）
+        print(
+        f"KMeans - Segments: {len(np.unique(seg_labels_pilot_kmeans))}, "
+        f"Actions: {action_kmeans}",
+        )
+
+
+    # --------------------------------------------------
+    # 4b. GMM
+    # --------------------------------------------------
+    if "gmm" in ALGO_LIST:
+        t0 = time.perf_counter()
+        gmm_seg, seg_labels_pilot_gmm, best_K_gmm = run_gmm_segmentation(
+            X_pilot, D_pilot, y_pilot, K_candidates=[2, 3, 4, 5, 6, 7 , 8]
+        )
+        tau_gmm, action_gmm = estimate_segment_policy(
+            X_pilot, y_pilot, D_pilot, seg_labels_pilot_gmm
+        )
+        seg_labels_impl_gmm = gmm_seg.assign(X_impl)
+        value_gmm = evaluate_policy(
+            X_impl, D_impl, y_impl,
+            seg_labels_impl_gmm,
+            mu1_pilot_model, mu0_pilot_model,
+            action_gmm, e_pilot
+        )
+        t1 = time.perf_counter()
+        results["gmm"] = float(value_gmm["value_mean"])
+        results["time_gmm"] = float(t1 - t0)   # 👈 记录时间（单位秒）
+        print(
+        f"GMM - Segments: {len(np.unique(seg_labels_pilot_gmm))}, "
+        f"Actions: {action_gmm}",
+        )
+
+
+    # --------------------------------------------------
+    # 4c. CLR
+    # --------------------------------------------------
+    if "clr" in ALGO_LIST:
+        t0 = time.perf_counter()
+        clr_seg, seg_labels_pilot_clr, best_K_clr = run_clr_segmentation(
+            X_pilot, D_pilot, y_pilot,
+            K_candidates=[2, 3, 4, 5],
+            kmeans_coef=0.1,
+            num_tries=8,
+        )
+        tau_clr, action_clr = estimate_segment_policy(
+            X_pilot, y_pilot, D_pilot, seg_labels_pilot_clr
+        )
+        seg_labels_impl_clr = clr_seg.assign(X_impl)
+        value_clr = evaluate_policy(
+            X_impl, D_impl, y_impl,
+            seg_labels_impl_clr,
+            mu1_pilot_model, mu0_pilot_model,
+            action_clr, e_pilot
+        )
+        t1 = time.perf_counter()
+        results["clr"] = float(value_clr["value_mean"])
+        results["time_clr"] = float(t1 - t0)   # 👈 记录时间（单位秒）
+        print(
+        f"CLR - Segments: {len(np.unique(seg_labels_pilot_clr))}, "
+        f"Actions: {action_clr}",
+        )
+
+
+    # --------------------------------------------------
+    # 5–6. DAST
+    # --------------------------------------------------
+    if "dast" in ALGO_LIST:
+        t0 = time.perf_counter()
+        (
+            tree_final,
+            seg_labels_pilot_dast,
+            best_M_dast,
+            best_action_dast_train,
+        ) = run_dast_dams(
+            X_pilot, D_pilot, y_pilot,
+            mu1_pilot_model, mu0_pilot_model,
+            e_pilot, Gamma_pilot,
+            train_frac=train_frac,
+            M_candidates=(2, 3, 4, 5, 6, 7, 8),
+            min_leaf_size=5,
+        )
+        tau_dast, action_dast = estimate_segment_policy(
+            X_pilot, y_pilot, D_pilot, seg_labels_pilot_dast
+        )
+        seg_labels_impl_dast = tree_final.assign(X_impl)
+        value_dast = evaluate_policy(
+            X_impl, D_impl, y_impl,
+            seg_labels_impl_dast,
+            mu1_pilot_model, mu0_pilot_model,
+            action_dast, e_pilot
+        )
+        t1 = time.perf_counter()
+        results["dast"] = float(value_dast["value_mean"])
+        results["time_dast"] = float(t1 - t0)   # 👈 记录时间（单位秒）
+        print(
+        f"DAST - Segments: {len(np.unique(seg_labels_pilot_dast))}, "
+        f"Actions: {action_dast}",
+        )
+    
+    # MST
+    if "mst" in ALGO_LIST:
+        t0 = time.perf_counter()
+        tree_mst, seg_labels_pilot_mst, best_M_mst, action_mst = run_mst_dams(
+            X_pilot, D_pilot, y_pilot,
+            mu1_pilot_model, mu0_pilot_model,
+            e_pilot,
+            train_frac=0.5,
+            M_candidates=(2,3,4,5,6),
+            min_leaf_size=5,
+        )
+
+        seg_labels_impl_mst = tree_mst.assign(X_impl)
+
+        value_mst = evaluate_policy(
+            X_impl, D_impl, y_impl,
+            seg_labels_impl_mst,
+            mu1_pilot_model, mu0_pilot_model,
+            action_mst,
+            e_pilot,
+        )
+        t1 = time.perf_counter()
+        results["mst"] = float(value_mst["value_mean"])
+        results["time_mst"] = float(t1 - t0)  
+        print(
+        f"MST - Segments: {len(np.unique(seg_labels_pilot_mst))}, "
+        f"Actions: {action_mst}",
+        )
+
+    # Policytree (R based)
+    if "policytree" in ALGO_LIST:
+        t0 = time.perf_counter()
+        policy_seg, seg_labels_pilot_policy, best_M_policy = run_policytree_segmentation(
+            X_pilot, D_pilot, y_pilot,
+            mu1_pilot_model, mu0_pilot_model, e_pilot,
+            depth=2,
+            train_frac=0.7,
+            M_candidates=[2, 3, 4, 5],
+            min_leaf_size=5,   # 现在没直接用到，但你以后可以加约束
+        )
+        tau_policy, action_policy = estimate_segment_policy(
+            X_pilot, y_pilot, D_pilot, seg_labels_pilot_policy
+        )
+        seg_labels_impl_policy = policy_seg.assign(X_impl)
+        value_policy = evaluate_policy(
+            X_impl, D_impl, y_impl,
+            seg_labels_impl_policy,
+            mu1_pilot_model, mu0_pilot_model,
+            action_policy, e_pilot
+        )
+        t1 = time.perf_counter()
+        results["policytree"] = float(value_policy["value_mean"])
+        results["time_policytree"] = float(t1 - t0)
+        print(
+            f"PolicyTree - Segments: {len(np.unique(seg_labels_pilot_policy))}, "
+            f"Actions: {action_policy}, Time: {t1 - t0:.2f} seconds"
+        )
+
+
+
+    # --------------------------------------------------
+    # 输出 summary
+    # --------------------------------------------------
+    print("\nResult for this run:")
+    for k, v in results.items():
+        print(f"{k:15s}: {v}")
+
+    return results
 
 def run_multiple_experiments(
-    N_sim=10,
-    sample_frac=0.03,
-    pilot_frac=0.4,
-    out_path="criteo_sim_results.pkl",
+    N_sim,
+    sample_frac,
+    pilot_frac,
+    out_path,
 ):
-    """
-    重复跑 N_sim 次实验；每跑完一轮就覆盖保存一次 pkl。
-    """
-    all_results = []
+    experiment_data = {
+        "params": {
+            "sample_frac": sample_frac,
+            "pilot_frac": pilot_frac,
+            "train_frac": train_frac,
+            "N_sim": N_sim
+        },
+        "results": []  # 用来存每次 run 的结果
+    }
 
     print("\n" + "=" * 60)
     print(f"STARTING SIMULATIONS: N_sim = {N_sim}")
     print("=" * 60)
 
     for s in range(N_sim):
-        # 每一轮用一个新的 seed
-        seed = np.random.randint(0, 1_000_000)
-        res = run_single_experiment(
-            sample_frac=sample_frac,
-            pilot_frac=pilot_frac,
-            seed=seed,
-        )
-        all_results.append(res)
+        try:
+            res = run_single_experiment(
+                sample_frac=sample_frac,
+                pilot_frac=pilot_frac,
+            )
+        
+            experiment_data["results"].append(res)
 
-        # 每轮都覆盖保存一次
-        with open(out_path, "wb") as f:
-            pickle.dump(all_results, f)
+            # 每轮覆盖保存
+            with open(out_path, "wb") as f:
+                pickle.dump(experiment_data, f)
+            
+            print(f'[SIM {len(experiment_data["results"])}/{N_sim}] saved → {out_path}')
+            print("-" * 60)
+            
+        
+        except:
+            # print reason for error
+            import traceback
+            traceback.print_exc()  # 打印完整错误堆栈，便于定位
+            continue
 
-        print(
-            f"\n[SIM {s+1}/{N_sim}] saved {len(all_results)} runs to '{out_path}'"
-        )
-        print("-" * 60)
+        
 
-    print("\n" + "=" * 60)
-    print("ALL SIMULATIONS DONE.")
+    print("\nALL SIMULATIONS DONE.")
     print(f"Results saved in '{out_path}'")
-    print("=" * 60)
 
 
 if __name__ == "__main__":
-    # 你可以在这里改 N_sim 或输出路径
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Run multiple Criteo segmentation experiments"
+    )
+
+    parser.add_argument(
+        "--outpath",
+        type=str,
+        default=None,
+        help="Output pkl path"
+    )
+
+    args = parser.parse_args()
+
+    pilot_frac = 0.5  # 50% data for pilot
+    train_frac = 0.7  # 70% pilot for training
+    
     run_multiple_experiments(
-        N_sim=20,
-        sample_frac=0.02,
-        pilot_frac=0.4,
-        out_path="criteo_sim_results.pkl",
+        N_sim=100,
+        sample_frac=0.01,
+        pilot_frac=pilot_frac,
+        out_path=args.outpath,
     )
