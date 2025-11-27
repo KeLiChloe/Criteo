@@ -8,35 +8,7 @@ from dast import DASTree
 from data_utils import  split_seg_train_test
 from estimation import estimate_segment_policy  
 from clr import CLRSeg, clr_bic_score
-from policytree import PolicyTreeSeg, _fit_policytree_with_grf
-
-class BaseSegmentation:
-    """Base class for segmentation methods."""
-    def fit(self, X, *args, **kwargs):
-        raise NotImplementedError
-    def assign(self, X):
-        raise NotImplementedError
-
-
-class KMeansSeg(BaseSegmentation):
-    """K-Means based segmentation."""
-    def __init__(self, n_segments, random_state=0):
-        self.k = n_segments
-        self.random_state = random_state
-        self.model = None
-
-    def fit(self, X, *args, **kwargs):
-        self.model = KMeans(
-            n_clusters=self.k,
-            n_init=10,
-            random_state=self.random_state
-        ).fit(X)
-        return self
-
-    def assign(self, X):
-        if self.model is None:
-            raise RuntimeError("KMeansSeg: call fit() first")
-        return self.model.predict(X)
+from policytree import PolicyTreeSeg, _fit_policytree_with_grf, policytree_post_prune_tree
 
 
 # segmentation.py
@@ -245,7 +217,6 @@ def run_dast_dams(
 
     best_M = None
     best_score = -np.inf
-    best_action = None
 
     print(f"\nTesting M candidates: {list(M_candidates)}")
     for M in M_candidates:
@@ -256,14 +227,14 @@ def run_dast_dams(
             gamma=Gamma_train,
             candidate_thresholds=H_full,
             min_leaf_size=min_leaf_size,
-            max_depth=max(2, int(np.ceil(np.log2(M))) + 1),
+            max_depth=max(2, int(np.ceil(np.log2(M)))),
         )
         tree.build()
         tree.prune_to_M(M)
 
         # segment labels on train + segment-level policy (diff-in-means on y)
         labels_train = tree.assign(X_train)
-        tau_hat_M, action_M = estimate_segment_policy(
+        action_M = estimate_segment_policy(
             X_train, y_train, D_train, labels_train
         )
 
@@ -283,7 +254,6 @@ def run_dast_dams(
         if score_M >= best_score:
             best_score = score_M
             best_M = M
-            best_action = action_M
 
     print(f"\n✓ DAST: selected M = {best_M} with DAMS-score = {best_score:.6f}\n")
 
@@ -306,9 +276,11 @@ def run_dast_dams(
     tree_final.build()
     tree_final.prune_to_M(best_M)
     seg_labels_pilot = tree_final.assign(X_pilot)
+    action_full_pilot = estimate_segment_policy(
+        X_pilot, y_pilot, D_pilot, seg_labels_pilot
+    )
 
-    return tree_final, seg_labels_pilot, best_M, best_action
-
+    return tree_final, seg_labels_pilot, best_M, action_full_pilot
 
 
 from clr import CLRSeg, clr_bic_score
@@ -393,7 +365,7 @@ def run_mst_dams(
     # --------------------------------------------------
     print("Computing candidate thresholds (MST)...")
     d_full = X_pilot.shape[1]
-    bins = 20
+    bins = 50
     H_full = {}
 
     for j in range(d_full):
@@ -422,7 +394,6 @@ def run_mst_dams(
     # --------------------------------------------------
     best_M = None
     best_score = -np.inf
-    best_action = None
 
     print(f"\nTesting M candidates for MST: {list(M_candidates)}")
     for M in M_candidates:
@@ -432,7 +403,7 @@ def run_mst_dams(
             D=D_train,
             candidate_thresholds=H_full,
             min_leaf_size=min_leaf_size,
-            max_depth=max(2, int(np.ceil(np.log2(M))) + 1),
+            max_depth=max(2, int(np.ceil(np.log2(M)))),
             epsilon=0.0,
         )
         tree.build()
@@ -440,7 +411,7 @@ def run_mst_dams(
 
         # segment labels on train + segment-level policy (diff-in-means on y)
         labels_train = tree.assign(X_train)
-        tau_hat_M, action_M = estimate_segment_policy(
+        action_M = estimate_segment_policy(
             X_train, y_train, D_train, labels_train
         )
 
@@ -460,7 +431,6 @@ def run_mst_dams(
         if score_M >= best_score:
             best_score = score_M
             best_M = M
-            best_action = action_M
 
     print(f"\n✓ MST: selected M = {best_M} with DAMS-score = {best_score:.6f}\n")
 
@@ -485,9 +455,11 @@ def run_mst_dams(
     tree_final.build()
     tree_final.prune_to_M(best_M)
     seg_labels_pilot = tree_final.assign(X_pilot)
+    action_full_pilot = estimate_segment_policy(
+        X_pilot, y_pilot, D_pilot, seg_labels_pilot
+    )
 
-    return tree_final, seg_labels_pilot, best_M, best_action
-
+    return tree_final, seg_labels_pilot, best_M, action_full_pilot
 
 
 
@@ -503,75 +475,77 @@ def run_policytree_segmentation(
     mu1_pilot_model,
     mu0_pilot_model,
     e_pilot: float,
-    depth: int = 2,
-    train_frac: float = 0.7,
-    M_candidates=(2, 3, 4, 5),
-    min_leaf_size: int = 20,
+    train_frac: float,
+    M_candidates,
 ):
     """
-    和 run_dast_dams 类似的接口：
+    POLICYTREE + DAMS 版本（Gamma 由 R 端 GRF 计算）。
 
-      输入：
-        - X_pilot, D_pilot, y_pilot：pilot 数据
-        - mu1_pilot_model, mu0_pilot_model, e_pilot：用于 DAMS 的 DR
-        - depth：policy_tree 的最大深度
-        - train_frac：train / val 划分
-        - M_candidates：候选 segment 个数
-      输出：
-        - seg_model_final: PolicyTreeSeg（在 full pilot 上重训 + prune）
-        - seg_labels_pilot: full pilot 上的 segment_id
-        - best_M: 选出来的 M
-        - best_action: 在 full pilot 上重估的 segment 行为（diff-in-means 学的）
+    区别于之前版本：
+      - 对于每一个候选 M，都在 train_seg 上重新 fit 一次
+        GRF + policy_tree，然后在这棵树上做 post-pruning 到 M。
+
+    输入
+    ----
+    X_pilot, D_pilot, y_pilot : pilot 数据
+    mu1_pilot_model, mu0_pilot_model, e_pilot : 用于 DAMS 的 DR
+    depth : policy_tree 的最大深度（R 里的 depth 参数）
+    train_frac : pilot 中用于 segmentation 训练的比例
+    M_candidates : 候选的 segment 数
+
+    输出
+    ----
+    seg_model_final : PolicyTreeSeg，在 full pilot 上重训 + prune 后的最终模型
+    seg_labels_pilot : full pilot 上的 segment_id
+    best_M : 选出来的最佳 segment 数
+    action_final : full pilot 上用 diff-in-means(y) 学出的 segment-level action
     """
 
     print("\n" + "=" * 60)
     print("POLICYTREE: selecting M via DAMS (Gamma from R)")
     print("=" * 60)
 
-    # 1) train/val split
+    # 1) train / val split
     (X_train, D_train, y_train), (X_val, D_val, y_val) = split_seg_train_test(
-        X_pilot, D_pilot, y_pilot,
-        test_frac=1 - train_frac
+        X_pilot, D_pilot, y_pilot, test_frac=1 - train_frac
     )
-
     print(f"Train size: {len(X_train)}, Validation size: {len(X_val)}")
-    print(f"Fitting GRF + PolicyTree on train with depth={depth} ...")
 
-    # 2) 在 train 上用 R 拟合 policy_tree + Gamma
-    tree_r_train, Gamma_train, leaf_parent_map, leaf_ids_train, action_ids_train = \
-        _fit_policytree_with_grf(X_train, y_train, D_train, depth=depth)
-
-    # 换算 leaf 数量的上限
-    n_initial_segments = len(np.unique(leaf_ids_train))
-    M_candidates = [M for M in M_candidates if M <= n_initial_segments]
-    if not M_candidates:
-        raise ValueError(f"No valid M_candidates <= initial leaf count {n_initial_segments}")
-
-    print(f"Initial leaf count (train): {n_initial_segments}")
-    print(f"Testing M candidates: {M_candidates}")
+    M_candidates = list(M_candidates)
+    print(f"Candidate M's: {M_candidates}")
 
     best_M = None
     best_score = -np.inf
-    best_action = None
-    best_leaf_to_pruned = None
 
-    # 3) 对每个 M 做 post-pruning + DAMS
+    # 2) 对每个 M：重新 fit 一棵 policy tree，再 prune 到 M + DAMS
     for M in M_candidates:
-        print(f"\n  >> M = {M}")
+        depth = max(2, int(np.ceil(np.log2(M))))
+        print("\n" + "-" * 60)
+        print(f"  >> POLICYTREE: M = {M}, depth = {depth}")
+        print("-" * 60)
+
+        # 2.1 在 train_seg 上 fit GRF + policytree
+        tree_r_train, Gamma_train, leaf_parent_map, leaf_ids_train, action_ids_train = \
+            _fit_policytree_with_grf(X_train, y_train, D_train, depth=depth)
+
+        n_leaves_train = len(np.unique(leaf_ids_train))
+
+
+        # 2.2 在这棵树上 prune 到 M 个叶子
         seg_labels_train, action_ids_seg, leaf_to_pruned = policytree_post_prune_tree(
             leaf_ids_train,
             action_ids_train,
             Gamma_train,
             target_leaf_num=M,
-            leaf_to_parent_map=leaf_parent_map
+            leaf_to_parent_map=leaf_parent_map,
         )
 
-        # 基于 train segmentation，用 diff-in-means(y) 学各 segment 的 action
-        tau_hat_M, action_M = estimate_segment_policy(
+        # 2.3 在 train_seg 上，用 diff-in-means(y) 学各 segment 的 action
+        action_M = estimate_segment_policy(
             X_train, y_train, D_train, seg_labels_train
         )
 
-        # 构造一个临时 segmentation model（只用于 DAMS scoring）
+        # 2.4 构造一个临时 segmentation model（用来在 val_seg 上做 DAMS）
         seg_model_tmp = PolicyTreeSeg(tree_r_train, leaf_to_pruned)
 
         score_M = dams_score(
@@ -584,26 +558,31 @@ def run_policytree_segmentation(
             e=e_pilot,
             action=action_M,
         )
-        print(f"    DAMS-score = {score_M:.6f}")
+        print(f"    DAMS-score(M={M}) = {score_M:.6f}")
 
         if score_M >= best_score:
             best_score = score_M
             best_M = M
-            best_action = action_M
-            best_leaf_to_pruned = leaf_to_pruned
+
+    if best_M is None:
+        raise RuntimeError(
+            "PolicyTree: no valid M found (all M_cand > leaf_count on train)."
+        )
 
     print(f"\n✓ POLICYTREE: selected M = {best_M} with DAMS-score = {best_score:.6f}")
 
-    # 4) 在 full pilot 上重训一次 policy_tree + Gamma，再 prune 到 best_M
-
+    # 3) 在 full pilot 上重训一棵 policy tree，并 prune 到 best_M
     print("\nRe-fitting GRF + PolicyTree on FULL pilot ...")
     tree_r_full, Gamma_full, leaf_parent_full, leaf_ids_full, action_ids_full = \
         _fit_policytree_with_grf(X_pilot, y_pilot, D_pilot, depth=depth)
 
-    # 注意：full pilot 上的 initial leaf 数可能和 train 不同，
-    # 这里再 prune 一次到 best_M （如果不够就用实际 leaf 数）
     n_leaves_full = len(np.unique(leaf_ids_full))
     target_M_full = min(best_M, n_leaves_full)
+    if target_M_full < best_M:
+        print(
+            f"  [WARN] full-pilot leaf_count={n_leaves_full} < best_M={best_M}, "
+            f"so we prune to {target_M_full} instead."
+        )
 
     seg_labels_full, action_ids_full_seg, leaf_to_pruned_full = policytree_post_prune_tree(
         leaf_ids_full,
@@ -613,8 +592,8 @@ def run_policytree_segmentation(
         leaf_to_parent_map=leaf_parent_full,
     )
 
-    # full pilot 上再用 diff-in-means(y) 学一遍 action
-    tau_final, action_final = estimate_segment_policy(
+    # 4) 在 full pilot 上重新估计 segment-level action（diff-in-means on y）
+    action_final = estimate_segment_policy(
         X_pilot, y_pilot, D_pilot, seg_labels_full
     )
 

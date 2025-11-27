@@ -21,7 +21,8 @@ from segmentation import (
 
 import time  
 
-ALGO_LIST = ["kmeans", "gmm", "clr", "dast", "mst"]  # 可选算法列表，包含 CLR
+ALGO_LIST = [ "policytree", "dast", "kmeans", "gmm", "clr", "dast", "mst"] # ["kmeans", "gmm", "clr", "dast", "mst"]  # 可选算法列表，包含 CLR
+M_candidates = [2, 3, 4, 5, 6]
 # good seed: 380776, 458676
 
 def run_single_experiment(sample_frac, pilot_frac):
@@ -57,7 +58,7 @@ def run_single_experiment(sample_frac, pilot_frac):
         X_impl, D_impl, y_impl,
         seg_labels_all_treat,
         mu1_pilot_model, mu0_pilot_model,
-        np.array([1]), e_pilot
+        np.array([1])
     )
     results["all_treat"] = float(value_all_treat["value_mean"])
 
@@ -66,7 +67,7 @@ def run_single_experiment(sample_frac, pilot_frac):
         X_impl, D_impl, y_impl,
         seg_labels_all_control,
         mu1_pilot_model, mu0_pilot_model,
-        np.array([0]), e_pilot
+        np.array([0])
     )
     results["all_control"] = float(value_all_control["value_mean"])
 
@@ -75,7 +76,7 @@ def run_single_experiment(sample_frac, pilot_frac):
         X_impl, D_impl, y_impl,
         seg_labels_random,
         mu1_pilot_model, mu0_pilot_model,
-        np.array([0, 1]), e_pilot
+        np.array([0, 1])
     )
     results["random"] = float(value_random["value_mean"])
 
@@ -86,9 +87,9 @@ def run_single_experiment(sample_frac, pilot_frac):
     if "kmeans" in ALGO_LIST:
         t0 = time.perf_counter()
         kmeans_seg, seg_labels_pilot_kmeans, best_K_kmeans = run_kmeans_segmentation(
-            X_pilot, D_pilot, y_pilot, K_candidates=[2, 3, 4, 5, 6, 7, 8]
+            X_pilot, D_pilot, y_pilot, K_candidates=M_candidates
         )
-        tau_kmeans, action_kmeans = estimate_segment_policy(
+        action_kmeans = estimate_segment_policy(
             X_pilot, y_pilot, D_pilot, seg_labels_pilot_kmeans
         )
         seg_labels_impl_kmeans = kmeans_seg.assign(X_impl)
@@ -96,7 +97,7 @@ def run_single_experiment(sample_frac, pilot_frac):
             X_impl, D_impl, y_impl,
             seg_labels_impl_kmeans,
             mu1_pilot_model, mu0_pilot_model,
-            action_kmeans, e_pilot
+            action_kmeans
         )
         t1 = time.perf_counter()
         results["kmeans"] = float(value_kmeans["value_mean"])
@@ -113,9 +114,9 @@ def run_single_experiment(sample_frac, pilot_frac):
     if "gmm" in ALGO_LIST:
         t0 = time.perf_counter()
         gmm_seg, seg_labels_pilot_gmm, best_K_gmm = run_gmm_segmentation(
-            X_pilot, D_pilot, y_pilot, K_candidates=[2, 3, 4, 5, 6, 7 , 8]
+            X_pilot, D_pilot, y_pilot, K_candidates=M_candidates,
         )
-        tau_gmm, action_gmm = estimate_segment_policy(
+        action_gmm = estimate_segment_policy(
             X_pilot, y_pilot, D_pilot, seg_labels_pilot_gmm
         )
         seg_labels_impl_gmm = gmm_seg.assign(X_impl)
@@ -123,7 +124,7 @@ def run_single_experiment(sample_frac, pilot_frac):
             X_impl, D_impl, y_impl,
             seg_labels_impl_gmm,
             mu1_pilot_model, mu0_pilot_model,
-            action_gmm, e_pilot
+            action_gmm
         )
         t1 = time.perf_counter()
         results["gmm"] = float(value_gmm["value_mean"])
@@ -141,11 +142,11 @@ def run_single_experiment(sample_frac, pilot_frac):
         t0 = time.perf_counter()
         clr_seg, seg_labels_pilot_clr, best_K_clr = run_clr_segmentation(
             X_pilot, D_pilot, y_pilot,
-            K_candidates=[2, 3, 4, 5],
+            K_candidates=M_candidates,
             kmeans_coef=0.1,
             num_tries=8,
         )
-        tau_clr, action_clr = estimate_segment_policy(
+        action_clr = estimate_segment_policy(
             X_pilot, y_pilot, D_pilot, seg_labels_pilot_clr
         )
         seg_labels_impl_clr = clr_seg.assign(X_impl)
@@ -153,7 +154,7 @@ def run_single_experiment(sample_frac, pilot_frac):
             X_impl, D_impl, y_impl,
             seg_labels_impl_clr,
             mu1_pilot_model, mu0_pilot_model,
-            action_clr, e_pilot
+            action_clr
         )
         t1 = time.perf_counter()
         results["clr"] = float(value_clr["value_mean"])
@@ -179,10 +180,10 @@ def run_single_experiment(sample_frac, pilot_frac):
             mu1_pilot_model, mu0_pilot_model,
             e_pilot, Gamma_pilot,
             train_frac=train_frac,
-            M_candidates=(2, 3, 4, 5, 6, 7, 8),
+            M_candidates=M_candidates,
             min_leaf_size=5,
         )
-        tau_dast, action_dast = estimate_segment_policy(
+        action_dast = estimate_segment_policy(
             X_pilot, y_pilot, D_pilot, seg_labels_pilot_dast
         )
         seg_labels_impl_dast = tree_final.assign(X_impl)
@@ -190,7 +191,7 @@ def run_single_experiment(sample_frac, pilot_frac):
             X_impl, D_impl, y_impl,
             seg_labels_impl_dast,
             mu1_pilot_model, mu0_pilot_model,
-            action_dast, e_pilot
+            action_dast
         )
         t1 = time.perf_counter()
         results["dast"] = float(value_dast["value_mean"])
@@ -208,8 +209,13 @@ def run_single_experiment(sample_frac, pilot_frac):
             mu1_pilot_model, mu0_pilot_model,
             e_pilot,
             train_frac=0.5,
-            M_candidates=(2,3,4,5,6),
+            M_candidates=M_candidates,
             min_leaf_size=5,
+        )
+
+        print(
+        f"MST - Segments: {len(np.unique(seg_labels_pilot_mst))}, "
+        f"Actions: {action_mst}",
         )
 
         seg_labels_impl_mst = tree_mst.assign(X_impl)
@@ -219,28 +225,22 @@ def run_single_experiment(sample_frac, pilot_frac):
             seg_labels_impl_mst,
             mu1_pilot_model, mu0_pilot_model,
             action_mst,
-            e_pilot,
         )
         t1 = time.perf_counter()
         results["mst"] = float(value_mst["value_mean"])
         results["time_mst"] = float(t1 - t0)  
-        print(
-        f"MST - Segments: {len(np.unique(seg_labels_pilot_mst))}, "
-        f"Actions: {action_mst}",
-        )
+        
 
     # Policytree (R based)
     if "policytree" in ALGO_LIST:
         t0 = time.perf_counter()
-        policy_seg, seg_labels_pilot_policy, best_M_policy = run_policytree_segmentation(
+        policy_seg, seg_labels_pilot_policy, best_M, best_M_policy = run_policytree_segmentation(
             X_pilot, D_pilot, y_pilot,
             mu1_pilot_model, mu0_pilot_model, e_pilot,
-            depth=2,
             train_frac=0.7,
-            M_candidates=[2, 3, 4, 5],
-            min_leaf_size=5,   # 现在没直接用到，但你以后可以加约束
+            M_candidates=M_candidates,
         )
-        tau_policy, action_policy = estimate_segment_policy(
+        action_policy = estimate_segment_policy(
             X_pilot, y_pilot, D_pilot, seg_labels_pilot_policy
         )
         seg_labels_impl_policy = policy_seg.assign(X_impl)
@@ -338,8 +338,8 @@ if __name__ == "__main__":
     train_frac = 0.7  # 70% pilot for training
     
     run_multiple_experiments(
-        N_sim=100,
-        sample_frac=0.01,
+        N_sim=1,
+        sample_frac=0.002,
         pilot_frac=pilot_frac,
         out_path=args.outpath,
     )

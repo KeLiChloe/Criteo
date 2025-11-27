@@ -133,9 +133,9 @@ class MSTree:
         current_leaves = self._get_leaf_nodes()
 
         # 如果一开始叶子少于 M，就直接返回（和你现在 DAST 版本一致的宽松做法）
-        # if len(current_leaves) < M:
-        #     raise ValueError(...)
-
+        if len(current_leaves) <= M:
+           print(f"Warning: current leaf count {len(current_leaves)} <= target M={M}. No pruning performed.")
+           
         while len(current_leaves) > M:
             prunable_nodes = self._get_internal_nodes_with_leaf_children()
             if not prunable_nodes:

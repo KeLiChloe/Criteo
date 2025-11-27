@@ -4,7 +4,6 @@ import numpy as np
 
 from data_utils import split_seg_train_test
 from estimation import estimate_segment_policy
-from scoring import dams_score
 from outcome_model import predict_mu
 
 # rpy2 / R
@@ -12,6 +11,7 @@ import rpy2.robjects as ro
 from rpy2.robjects import numpy2ri, default_converter
 from rpy2.robjects.conversion import localconverter
 from rpy2.robjects.packages import importr
+from rpy2.robjects.vectors import FloatVector
 
 # =====================================================================
 # R packages
@@ -51,10 +51,45 @@ ro.r(
 #  Helper: 用 GRF 计算 Gamma，并在 R 里拟合 policy_tree
 # =====================================================================
 
-def _fit_policytree_with_grf(X_train: np.ndarray,
-                             y_train: np.ndarray,
-                             D_train: np.ndarray,
-                             depth: int):
+# Assuming 'grf' and 'policytree' are already imported via importr(...)
+
+# The function definition (you may need to include the actual imports if this is a standalone file)
+
+# Load R libraries
+ro.r('library(policytree)')
+ro.r('library(DiagrammeRsvg)')
+
+# Define R function to extract leaf-parent relationships
+ro.r('''
+    extract_leaf_parent_map <- function(tree) {
+    node_list <- as.list(tree)$nodes
+    leaf_to_parent <- list()
+
+    # Helper: walk by index (each node is stored by ID/index)
+    walk_tree <- function(node_id, parent_id = NA) {
+        node <- node_list[[node_id]]
+        if (is.null(node)) return(NULL)
+
+        if (!is.null(node$is_leaf) && node$is_leaf) {
+        leaf_to_parent[[as.character(node_id)]] <<- parent_id
+        } else {
+        walk_tree(node$left_child, node_id)
+        walk_tree(node$right_child, node_id)
+        }
+    }
+
+    walk_tree(1)  # Start from root node ID = 1
+    return(leaf_to_parent)
+    }
+    ''')
+
+
+def _fit_policytree_with_grf(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    D_train: np.ndarray,
+    depth: int,
+):
     """
     用 R 的 grf + policytree:
       1) causal_forest
@@ -68,53 +103,63 @@ def _fit_policytree_with_grf(X_train: np.ndarray,
       - leaf_ids: numpy array, 每个样本所在叶子的 node.id
       - action_ids: numpy array, 每个样本的 action (0/1)
     """
-    with localconverter(default_converter + numpy2ri.converter):
-        X_r = ro.conversion.py2rpy(X_train)
-        y_r = ro.conversion.py2rpy(y_train)
-        D_r = ro.conversion.py2rpy(D_train)
 
-    # 1) causal_forest
+    # ---------- 1. 标准化形状 ----------
+    X_train = np.asarray(X_train, dtype=float)
+    y_train = np.asarray(y_train, dtype=float).ravel()
+    D_train = np.asarray(D_train, dtype=float).ravel()
+
+    # ---------- 2. Python -> R ----------
+    with localconverter(default_converter + numpy2ri.converter):
+        X_r = ro.conversion.py2rpy(X_train)   # matrix
+
+    y_r = FloatVector(y_train.tolist())       # numeric vector
+    D_r = FloatVector(D_train.tolist())       # numeric vector
+
+    # 2.1 causal_forest
     cforest = grf.causal_forest(X_r, y_r, D_r)
 
-    # 2) double robust scores Gamma
+    # 2.2 double robust scores
     Gamma_r = policytree.double_robust_scores(cforest)
 
-    # 放到 R 全局环境里，方便调用 policy_tree
+    # 放到 R 全局环境里，方便调用 policy_tree / extract_leaf_parent_map
     ro.globalenv["X_r"] = X_r
     ro.globalenv["Gamma_r"] = Gamma_r
-
-    # 3) policy_tree
-    ro.r(f"tree_obj <- policy_tree(X_r, Gamma_r, depth={depth})")
+    ro.r(f"tree_obj <- policy_tree(X_r, Gamma_r, depth = {depth})")
 
     tree_r = ro.r("tree_obj")
 
-    # 把 Gamma 转回 numpy
+    # ---------- 3. R -> Python ----------
     with localconverter(default_converter + numpy2ri.converter):
-        Gamma_train = ro.conversion.rpy2py(Gamma_r)
+        # 3.0 把 Gamma_r 转回 numpy
+        Gamma_train = np.asarray(ro.conversion.rpy2py(Gamma_r))
 
-    # 提取 leaf → parent map
-    leaf_to_parent_r = ro.r("extract_leaf_parent_map(tree_obj)")
-    leaf_to_parent_map = {
-        int(k): int(leaf_to_parent_r.rx2(k)[0])
-        for k in leaf_to_parent_r.names
-    }
+        
+        # 3.1 leaf -> parent map
+        leaf_to_parent_r = ro.r("extract_leaf_parent_map(tree_obj)")
+        
+        leaf_names = list(leaf_to_parent_r.names()) # 使用 list() 包裹生成器
+        leaf_values = list(leaf_to_parent_r)
+        leaf_to_parent_map = {
+                int(k): int(v) # 键 k 来自 leaf_names (字符串)，值 v 来自 leaf_values (R数值)
+                for k, v in zip(leaf_names, leaf_values)
+            }
 
-    # 训练集上的 node.id / action.id
-    segment_r = policytree.predict_policy_tree(tree_r, X_r, type="node.id")
-    action_r = policytree.predict_policy_tree(tree_r, X_r, type="action.id")
+        # 3.2 training 上的 node.id / action.id
+        segment_r = policytree.predict_policy_tree(tree_r, X_r, type="node.id")
+        action_r = policytree.predict_policy_tree(tree_r, X_r, type="action.id")
 
-    with localconverter(default_converter + numpy2ri.converter):
-        leaf_ids = np.array(ro.conversion.rpy2py(segment_r), dtype=int)
-        action_ids_raw = np.array(ro.conversion.rpy2py(action_r), dtype=int)
+        leaf_ids = np.asarray(ro.conversion.rpy2py(segment_r), dtype=int)
+        action_ids_raw = np.asarray(ro.conversion.rpy2py(action_r), dtype=int)
 
     # R 里 action.id 是 1/2，这里减 1 变成 0/1
     action_ids = action_ids_raw - 1
+
+    # ---------- 4. 清理 R 环境 ----------
     ro.r("rm(X_r, Gamma_r, tree_obj)")
     ro.r("gc()")
 
-
     return tree_r, Gamma_train, leaf_to_parent_map, leaf_ids, action_ids
-
 
 # =====================================================================
 #  Node 价值函数（用 GRF 的 Gamma）
@@ -212,10 +257,7 @@ def policytree_post_prune_tree(
                 best_action = 1 if (G1_m - G0_m) >= 0 else 0
 
         if best_pair is None:
-            raise ValueError(
-                f"Cannot prune further to {target_leaf_num} segments; "
-                f"current segments: {len(segment_map)}"
-            )
+            raise ValueError("No valid sibling pairs to merge.")
 
         s1, s2 = best_pair
         new_seg_id = min(s1, s2)
