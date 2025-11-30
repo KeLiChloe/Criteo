@@ -32,13 +32,13 @@ plt.rcParams.update({
 })
 
 # 沿用 NPG 学术配色
-academic_colors = ['#FF6B6B', '#4ECDC4', "#7F8893", '#C7F464', '#FFCC5C', "#79CBFB",  "#DA7BFF"]
+academic_colors = ['#FF6B6B', '#4ECDC4', "#7F8893", '#C7F464', '#FFCC5C', "#79CBFB",  "#DA7BFF", "#FF9F7F"]
 
 # ==========================================
 # 2. 数据处理
 # ==========================================
 
-with open("exp_results/exp3.pkl", "rb") as f:
+with open("test.pkl", "rb") as f:
     data_exp = pickle.load(f)
 
 # 获取参数
@@ -53,7 +53,7 @@ else:
     results_list = data_exp
 n_sims = len(results_list)
 
-baselines = ['all_treat', 'all_control', 'random', 'kmeans', 'gmm', 'clr']
+baselines = ['all_treat', 'all_control', 'random', 'kmeans', 'gmm', 'mst', 'clr', 'policytree']  # 'mst' 可选
 
 target = 'dast'
 records = []
@@ -75,7 +75,8 @@ label_map = {
     'kmeans': 'vs. K-Means',
     'gmm': 'vs. GMM', 
     'clr': 'vs. CLR',
-    # 'mst': 'vs. MST',
+    'mst': 'vs. MST',
+    'policytree': 'vs. Policytree',
 }
 df['Baseline_Label'] = df['Baseline'].map(label_map)
 
@@ -88,7 +89,8 @@ constant_order = [
     'vs. K-Means',
     'vs. GMM', 
     'vs. CLR',
-    # 'vs. MST',
+    'vs. MST',
+    'vs. Policytree',
 ]
 palette = {label: color for label, color in zip(constant_order, academic_colors)}
 
@@ -134,7 +136,8 @@ ax.set_xlabel('Benchmarks and Comparators', fontweight='bold', labelpad=12)
 ax.set_ylim(-50, 150) 
 
 # X 轴标签微调
-ax.set_xticklabels(ax.get_xticklabels(), fontweight='bold', rotation=0)
+ax.set_xticks(range(len(constant_order)))
+ax.set_xticklabels(constant_order, rotation=30, ha='right', fontsize=12, fontweight='bold')
 
 # 去除多余边框 (Despine)
 sns.despine(trim=True, offset=10) # offset让轴稍微分离，更有透气感

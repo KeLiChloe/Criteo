@@ -27,12 +27,12 @@ plt.rcParams.update({
     'figure.dpi': 300
 })
 
-academic_colors = ['#FF6B6B', '#4ECDC4', "#7F8893", '#C7F464', '#FFCC5C', "#79CBFB",  "#DA7BFF"]
+academic_colors = ['#FF6B6B', '#4ECDC4', "#7F8893", '#C7F464', '#FFCC5C', "#79CBFB",  "#DA7BFF", "#FFB39A"]
 
 # ==========================================
 # 2. 数据加载与处理
 # ==========================================
-with open("exp_results/exp3.pkl", "rb") as f:
+with open("test.pkl", "rb") as f:
     data_exp = pickle.load(f)
 
 # 获取参数
@@ -48,7 +48,7 @@ else:
 n_sims = len(results_list)
 
 
-baselines = ['all_treat', 'all_control', 'random', 'kmeans', 'gmm', 'clr', ]
+baselines = ['all_treat', 'all_control', 'random', 'kmeans', 'gmm', 'clr', 'mst','policytree']  # 'mst' 可选
 target = 'dast'
 records = []
 raw_data_map = {m: [] for m in baselines + [target]}
@@ -72,7 +72,8 @@ label_map = {
     'kmeans': 'vs. K-Means',
     'gmm': 'vs. GMM', 
     'clr': 'vs. CLR',
-    # 'mst': 'vs. MST',
+    'mst': 'vs. MST',
+    'policytree': 'vs. Policytree',
 }
 df['Baseline_Label'] = df['Baseline'].map(label_map)
 
@@ -94,7 +95,8 @@ constant_order = [
     'vs. K-Means',
     'vs. GMM', 
     'vs. CLR',
-    # 'vs. MST',
+    'vs. MST',
+    'vs. Policytree',
 ]
 palette = {label: color for label, color in zip(constant_order, academic_colors)}
 
@@ -154,7 +156,7 @@ sns.despine(left=True, top=True, right=True)
 # 1. 调整主标题位置
 # y=1.12: 将标题垂直位置手动设定在轴上方 1.12 倍处 (您可以根据需要微调这个数字，比如 1.15)
 # pad=...: pad 参数此时主要影响标题边框(如果有)的间距，有了 y 参数后，位置主要由 y 决定
-ax.set_title(f'Averaged DAST Improvement (%) with 95% CI (n={n_sims})', 
+ax.set_title(f'Averaged DAST Improvement (%) with 95% CI (Runs={n_sims})', 
              fontweight='bold', 
              pad=20,          # 如果用了 y，pad 可以稍微改小或者保持，主要靠 y 控制绝对位置
              fontsize=16, 
