@@ -233,7 +233,7 @@ class CLRSeg:
     def __init__(
         self,
         n_segments,
-        kmeans_coef=0.0,
+        kmeans_coef=0.3,
         num_tries=8,
         clr_lr=None,
         max_iter=10,

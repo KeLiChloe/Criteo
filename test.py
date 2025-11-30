@@ -204,3 +204,28 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+    if "kmeans_dams" in ALGO_LIST:
+        t0 = time.perf_counter()
+        kmeans_dams_seg, seg_labels_pilot_kmeans_dams, best_K_kmeans_dams = run_kmeans_dams_segmentation(
+            X_pilot, D_pilot, y_pilot, K_candidates=M_candidates
+        )
+        action_kmeans_dams = estimate_segment_policy(
+            X_pilot, y_pilot, D_pilot, seg_labels_pilot_kmeans_dams
+        )
+        seg_labels_impl_kmeans_dams = kmeans_dams_seg.assign(X_impl)
+        value_kmeans_dams = evaluate_policy(
+            X_impl, D_impl, y_impl,
+            seg_labels_impl_kmeans_dams,
+            mu1_pilot_model, mu0_pilot_model,
+            action_kmeans_dams
+        )
+        t1 = time.perf_counter()
+        results["kmeans_dams"] = float(value_kmeans_dams["value_mean"])
+        results["time_kmeans_dams"] = float(t1 - t0)   # 👈 记录时间（单位秒）
+        print(
+            f"KMeans_DAMS - Segments: {len(np.unique(seg_labels_pilot_kmeans_dams))}, "
+            f"Actions: {action_kmeans_dams}",
+        )
+    

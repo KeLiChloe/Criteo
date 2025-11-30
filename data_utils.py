@@ -43,8 +43,8 @@ def split_pilot_impl(X, D, y, pilot_frac, random_state=0):
     return X_pilot, X_impl, D_pilot, D_impl, y_pilot, y_impl
 
 
-def split_seg_train_test(X_pilot, D_pilot, y_pilot,
-                         test_frac, random_state=0):
+def split_seg_train_test(X_pilot, D_pilot, y_pilot, Gamma_pilot,
+                         test_frac):
     """
     Pilot → train_seg + test_seg
     不同 segmentation algorithm 会使用不同 test_frac。
@@ -56,12 +56,12 @@ def split_seg_train_test(X_pilot, D_pilot, y_pilot,
         # No test split
         return (X_pilot, D_pilot, y_pilot), (None, None, None)
 
-    X_tr, X_te, D_tr, D_te, y_tr, y_te = train_test_split(
-        X_pilot, D_pilot, y_pilot,
+    X_tr, X_te, D_tr, D_te, y_tr, y_te, Gamma_tr, Gamma_te = train_test_split(
+        X_pilot, D_pilot, y_pilot, Gamma_pilot,
         test_size=test_frac,
-        random_state=random_state,
-        stratify=D_pilot
-    )
+        random_state=0,
+        stratify=y_pilot)
+
     
     # Convert to numpy arrays if they are pandas objects
     # This ensures consistent integer-based indexing (not label-based)
@@ -87,7 +87,7 @@ def split_seg_train_test(X_pilot, D_pilot, y_pilot,
         y_tr = y_tr.values
         y_te = y_te.values
     
-    return (X_tr, D_tr, y_tr), (X_te, D_te, y_te)
+    return (X_tr, D_tr, y_tr, Gamma_tr), (X_te, D_te, y_te, Gamma_te)
 
 
 
@@ -125,17 +125,17 @@ def load_criteo(sample_frac, seed):
     print("\n Basic Information:")
     print(f"   X shape: {X.shape} (n={X.shape[0]}, d={X.shape[1]})")
 
-    print("\n Outcome by Treatment:")
-    y_control = y[D == 0]
-    y_treated = y[D == 1]
-    print(f"   Control (D=0) - mean: {y_control.mean():.6f}, std: {y_control.std():.6f}")
-    print(f"   Treated (D=1) - mean: {y_treated.mean():.6f}, std: {y_treated.std():.6f}")
-    print(f"   Naive ATE: {y_treated.mean() - y_control.mean():.6f}")
+    # print("\n Outcome by Treatment:")
+    # y_control = y[D == 0]
+    # y_treated = y[D == 1]
+    # print(f"   Control (D=0) - mean: {y_control.mean():.6f}, std: {y_control.std():.6f}")
+    # print(f"   Treated (D=1) - mean: {y_treated.mean():.6f}, std: {y_treated.std():.6f}")
+    # print(f"   Naive ATE: {y_treated.mean() - y_control.mean():.6f}")
     
-    # print ratio of treatment assignment (D=1) and positive outcomes
-    print("\n Treatment Assignment:")
-    print(f"   Treatment (D=1) ratio: {D.mean():.6f}")
-    print(f"   Positive Outcome (y=1) ratio: {y.mean():.6f}")
+    # # print ratio of treatment assignment (D=1) and positive outcomes
+    # print("\n Treatment Assignment:")
+    # print(f"   Treatment (D=1) ratio: {D.mean():.6f}")
+    # print(f"   Positive Outcome (y=1) ratio: {y.mean():.6f}")
 
     # 转成 numpy
     X_np = X.values
@@ -154,7 +154,7 @@ def load_criteo(sample_frac, seed):
 # =========================================================
 def prepare_pilot_impl(X, y, D, pilot_frac):
     print("\n" + "=" * 60)
-    print("STEP 1–3: Split & fit outcome models")
+    print("Split & fit outcome models")
     print("=" * 60)
 
     X_pilot, X_impl, D_pilot, D_impl, y_pilot, y_impl = split_pilot_impl(
@@ -162,21 +162,17 @@ def prepare_pilot_impl(X, y, D, pilot_frac):
     )
     print(f"Pilot size: {len(X_pilot)}, Implementation size: {len(X_impl)}")
 
-    print("\nFitting outcome models (mu1, mu0) on pilot...")
     mu1_pilot_model, mu0_pilot_model = fit_mu_models(
         X_pilot, D_pilot, y_pilot, model_type="logistic"
     )
     e_pilot = D_pilot.mean()
-    print(f"Propensity score e: {e_pilot:.3f}")
 
-    print("Computing pseudo-outcomes (Gamma) on pilot data...")
     mu1_pilot = predict_mu(mu1_pilot_model, X_pilot)
     mu0_pilot = predict_mu(mu0_pilot_model, X_pilot)
 
     Gamma1_pilot = mu1_pilot + (D_pilot / e_pilot) * (y_pilot - mu1_pilot)
     Gamma0_pilot = mu0_pilot + ((1 - D_pilot) / (1 - e_pilot)) * (y_pilot - mu0_pilot)
     Gamma_pilot = np.vstack([Gamma0_pilot, Gamma1_pilot]).T
-    print("Pseudo-outcomes computed.")
 
     return (
         X_pilot,

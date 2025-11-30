@@ -40,10 +40,10 @@ def estimate_segment_policy(X, y, D, seg_labels):
         y_seg = y[idx]
         y_0 = y_seg[D[idx] == 0]
         y_1 = y_seg[D[idx] == 1]
-        tau_hat[m] = y_1.mean() - y_0.mean()
-        
-        # Extract tau (coefficient for D, which is the last column)
-        
-        action[m] = 1 if tau_hat[m] > 0 else 0
+        if len(y_0) == 0 or len(y_1) == 0:
+            action[m] = np.random.choice([0, 1])
+        else:
+            tau_hat[m] = y_1.mean() - y_0.mean()
+            action[m] = 1 if tau_hat[m] > 0 else 0
     
-    return tau_hat, action
+    return action

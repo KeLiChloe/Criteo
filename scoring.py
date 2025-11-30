@@ -5,7 +5,7 @@ from outcome_model import predict_mu
 
 from sklearn.metrics import silhouette_score
 
-def kmeans_score(seg_model, X_pilot, D_pilot=None, y_pilot=None):
+def kmeans_silhouette_score(seg_model, X_pilot):
     """
     KMeans segmentation scoring using Silhouette Score.
 
@@ -30,8 +30,7 @@ def kmeans_score(seg_model, X_pilot, D_pilot=None, y_pilot=None):
     
 
 
-def dams_score(seg_model, X_val, D_val, y_val,
-               mu1_model, mu0_model, e, action):
+def dams_score(seg_model, X_val, D_val, y_val, Gamma_val, action):
     """
     Decision-Aware Model Selection 的 scoring 函数（Algorithm 3）.
 
@@ -53,12 +52,6 @@ def dams_score(seg_model, X_val, D_val, y_val,
     # 1) segmentation: assign each i to segment m
     labels = seg_model.assign(X_val)        # shape (N_val,)
 
-    # 2) 计算 validation 上的 DR scores Gamma
-    mu1 = predict_mu(mu1_model, X_val)
-    mu0 = predict_mu(mu0_model, X_val)
-
-    Gamma1 = mu1 + (D_val / e) * (y_val - mu1)
-    Gamma0 = mu0 + ((1 - D_val) / (1 - e)) * (y_val - mu0)
 
     # 3) 应用“之前学好的” segment-level action
     a_i = action[labels]                    # π^{C_M}(i)
@@ -75,8 +68,8 @@ def dams_score(seg_model, X_val, D_val, y_val,
     # 对 mismatch 的：根据 a_i 选 Gamma1 或 Gamma0
     v_hat[mask_mismatch] = np.where(
         a_i[mask_mismatch] == 1,
-        Gamma1[mask_mismatch],
-        Gamma0[mask_mismatch]
+        Gamma_val[mask_mismatch, 1],
+        Gamma_val[mask_mismatch, 0],
     )
 
     return float(v_hat.mean())

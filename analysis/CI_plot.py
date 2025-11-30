@@ -32,7 +32,7 @@ academic_colors = ['#FF6B6B', '#4ECDC4', "#7F8893", '#C7F464', '#FFCC5C', "#79CB
 # ==========================================
 # 2. 数据加载与处理
 # ==========================================
-with open("test.pkl", "rb") as f:
+with open("exp_results/Legion/test.pkl", "rb") as f:
     data_exp = pickle.load(f)
 
 # 获取参数
@@ -164,7 +164,7 @@ ax.set_title(f'Averaged DAST Improvement (%) with 95% CI (Runs={n_sims})',
 
 # 2. 调整 "Higher is Better" 标注位置
 # 将 xy 的 y 坐标从原来的 1.02 改为 1.06 (或者更高)，让它跟着标题一起往上走
-ax.annotate('Positive values (>0%) indicate DAST outperforms baselines', 
+ax.annotate('Positive values (>0%) indicate DAST outperforms other methods', 
             xy=(0.5, 1.06),             # <--- 【核心修改】：将 1.02 改为 1.06 (往上挪)
             xycoords='axes fraction',
             fontsize=12, fontweight='bold', color='#333333',
