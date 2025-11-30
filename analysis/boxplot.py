@@ -38,7 +38,7 @@ academic_colors = ['#FF6B6B', '#4ECDC4', "#7F8893", '#C7F464', '#FFCC5C', "#79CB
 # 2. 数据处理
 # ==========================================
 
-with open("exp_results/exp3.pkl", "rb") as f:
+with open("exp_results/exp4.pkl", "rb") as f:
     data_exp = pickle.load(f)
 
 # 获取参数
@@ -75,7 +75,7 @@ label_map = {
     'kmeans': 'vs. K-Means',
     'gmm': 'vs. GMM', 
     'clr': 'vs. CLR',
-    # 'mst': 'vs. MST',
+    'mst': 'vs. MST',
 }
 df['Baseline_Label'] = df['Baseline'].map(label_map)
 
@@ -88,7 +88,7 @@ constant_order = [
     'vs. K-Means',
     'vs. GMM', 
     'vs. CLR',
-    # 'vs. MST',
+    'vs. MST',
 ]
 palette = {label: color for label, color in zip(constant_order, academic_colors)}
 
@@ -128,7 +128,7 @@ ax.axhline(0, color="#2332F9", linestyle='--', linewidth=1.6, alpha=0.8)
 
 # 3.5 标签优化
 ax.set_ylabel('DAST Improvement Over Comparators (%)', fontweight='bold', labelpad=12)
-ax.set_xlabel('Benchmarks and Comparators', fontweight='bold', labelpad=12)
+ax.set_xlabel('Baselines and Comparators', fontweight='bold', labelpad=12)
 
 # 设置 Y 轴范围 (可选，根据数据调整，留出图例空间)
 ax.set_ylim(-50, 150) 
@@ -147,7 +147,7 @@ ax.set_title(f'Distribution of DAST Improvement (%) Over Comparators across {n_s
 
 # 2. 调整 "Higher is Better" 标注位置
 # 将 xy 的 y 坐标从原来的 1.02 改为 1.06 (或者更高)，让它跟着标题一起往上走
-ax.annotate('Positive values (>0%) indicate DAST outperforms baselines', 
+ax.annotate('Positive values (>0%) indicate DAST outperforms other methods', 
             xy=(0.5, 1.06),             # <--- 【核心修改】：将 1.02 改为 1.06 (往上挪)
             xycoords='axes fraction',
             fontsize=12, fontweight='bold', color='#333333',
@@ -184,6 +184,7 @@ legend_elements = [
     Line2D([0], [0], marker='o', color='w', markerfacecolor='#333333', alpha=0.4,
            markersize=5, linestyle='None', # 尺寸略微调大到 5，在图例中更清晰
            label='Dot: Single run result'),
+
 ]
 
 # 绘制图例

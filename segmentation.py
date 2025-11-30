@@ -5,7 +5,6 @@ from sklearn.mixture import GaussianMixture
 from outcome_model import predict_mu
 from scoring import dams_score, kmeans_silhouette_score
 from dast import DASTree
-from data_utils import  split_seg_train_test
 from estimation import estimate_segment_policy  
 from clr import CLRSeg, clr_bic_score
 from policytree import PolicyTreeSeg, _fit_policytree_with_grf, policytree_post_prune_tree
@@ -103,29 +102,15 @@ def run_kmeans_segmentation(X_pilot, M_candidates):
     seg_labels_pilot = best_seg.assign(X_pilot)
     return best_seg, seg_labels_pilot, best_M
 
-def run_kmeans_dams_segmentation(X_pilot, D_pilot, y_pilot, M_candidates, mu1_pilot_model,  mu0_pilot_model, e_pilot, train_frac):
+def run_kmeans_dams_segmentation(X_pilot,
+                                 X_train, D_train, y_train,
+                                 X_val, D_val, y_val,
+                                 Gamma_val,
+                                 M_candidates):
     print("\n" + "=" * 60)
     print("KMeans_DAMS - selecting optimal K")
     print("=" * 60)
-    
-    print(
-        f"Splitting pilot into train ({train_frac:.0%}) and "
-        f"validation ({1 - train_frac:.0%})..."
-    )
-    (X_train, D_train, y_train), (X_val, D_val, y_val) = split_seg_train_test(
-        X_pilot, D_pilot, y_pilot, test_frac=1 - train_frac
-    )
-    print(f"Train size: {len(X_train)}, Validation size: {len(X_val)}")
-    
-    # Gamma on train
-    print("Computing pseudo-outcomes on train split...")
-    mu1_train = predict_mu(mu1_pilot_model, X_train)
-    mu0_train = predict_mu(mu0_pilot_model, X_train)
 
-    Gamma1_train = mu1_train + (D_train / e_pilot) * (y_train - mu1_train)
-    Gamma0_train = mu0_train + ((1 - D_train) / (1 - e_pilot)) * (y_train - mu0_train)
-    Gamma_train = np.vstack([Gamma0_train, Gamma1_train]).T
-    
     best_M = None
     best_score = -np.inf
 
@@ -136,12 +121,11 @@ def run_kmeans_dams_segmentation(X_pilot, D_pilot, y_pilot, M_candidates, mu1_pi
             X_train, y_train, D_train, seg.assign(X_train)
         )
 
-        score = dams_score(seg_model=seg, X_val=X_val,
-                           D_val=D_val, y_val=y_val,
-                           mu1_model=mu1_pilot_model,
-                           mu0_model=mu0_pilot_model,
-                           e=e_pilot,
-                           action=action)
+        score = dams_score(seg_model = seg, 
+                           X_val = X_val, D_val = D_val, y_val = y_val, 
+                           Gamma_val = Gamma_val, 
+                           action = action)
+        
         print(f"  KMeans_DAMS M={M} score={score:.4f}")
 
         if score > best_score:
@@ -161,46 +145,85 @@ def run_kmeans_dams_segmentation(X_pilot, D_pilot, y_pilot, M_candidates, mu1_pi
 # =========================================================
 # 3. GMM segmentation + BIC 选 K
 # =========================================================
-def run_gmm_segmentation(X_pilot, K_candidates):
+def run_gmm_segmentation(X_pilot, M_candidates):
     print("\n" + "=" * 60)
-    print("STEP 4b: GMM - selecting optimal K via BIC")
+    print("STEP 4b: GMM - selecting optimal M via BIC")
     print("=" * 60)
 
     best_M = None
     best_bic = np.inf
     best_seg = None
 
-    for K in K_candidates:
-        seg = GMMSeg(K)
+    for M in M_candidates:
+        seg = GMMSeg(M)
         seg.fit(X_pilot)
 
         bic = seg.model.bic(X_pilot)
-        print(f"  GMM K={K} BIC={bic:.1f}")
+        print(f"  GMM M={M} BIC={bic:.1f}")
 
         if bic < best_bic:
             best_bic = bic
-            best_M = K
+            best_M = M
             best_seg = seg
 
-    print(f"\n✓ GMM: selected K = {best_M} with BIC = {best_bic:.1f}\n")
+    print(f"\n✓ GMM: selected M = {best_M} with BIC = {best_bic:.1f}\n")
     seg_labels_pilot = best_seg.assign(X_pilot)
     return best_seg, seg_labels_pilot, best_M
 
+
+def run_gmm_dams_segmentation(X_pilot, 
+                             X_train, D_train, y_train,
+                             X_val, D_val, y_val,
+                                Gamma_val,
+                              M_candidates):
+    print("\n" + "=" * 60)
+    print("GMM_DAMS - selecting optimal K")
+    print("=" * 60)
+    
+    
+    best_M = None
+    best_score = -np.inf
+
+    for M in M_candidates:
+        seg = GMMSeg(M)
+        seg.fit(X_train)
+        action = estimate_segment_policy(
+            X_train, y_train, D_train, seg.assign(X_train)
+        )
+
+        score = dams_score(seg_model=seg, 
+                           X_val=X_val,
+                           D_val=D_val, 
+                           y_val=y_val,
+                           Gamma_val=Gamma_val,
+                           action=action)
+        
+        print(f"  GMM_DAMS M={M} score={score:.4f}")
+
+        if score > best_score:
+            best_score = score
+            best_M = M
+
+    print(f"\n✓ GMM_DAMS: selected M = {best_M} with score = {best_score:.4f}\n")
+
+    final_seg = GMMSeg(best_M)
+    final_seg.fit(X_pilot)
+    seg_labels_pilot = final_seg.assign(X_pilot)
+
+    return final_seg, seg_labels_pilot, best_M
 
 # =========================================================
 # 4. DAST + DAMS（M selection）
 # =========================================================
 def run_dast_dams(
-    X_pilot,
-    D_pilot,
-    y_pilot,
-    mu1_pilot_model,
-    mu0_pilot_model,
-    e_pilot,
+    X_pilot, D_pilot,y_pilot,
+    X_train, D_train, y_train,
+    X_val, D_val, y_val,
     Gamma_pilot,
-    train_frac=0.7,
-    M_candidates=(2, 3, 4, 5, 6, 7),
-    min_leaf_size=20,
+    Gamma_train,
+    Gamma_val,
+    M_candidates,
+    min_leaf_size,
 ):
     print("\n" + "=" * 60)
     print("STEP 5: DAST - selecting optimal M via DAMS")
@@ -208,27 +231,7 @@ def run_dast_dams(
 
     d = X_pilot.shape[1]
 
-    # train / val split
-    print(
-        f"Splitting pilot into train ({train_frac:.0%}) and "
-        f"validation ({1 - train_frac:.0%})..."
-    )
-    (X_train, D_train, y_train), (X_val, D_val, y_val) = split_seg_train_test(
-        X_pilot, D_pilot, y_pilot, test_frac=1 - train_frac
-    )
-    print(f"Train size: {len(X_train)}, Validation size: {len(X_val)}")
-
-    # Gamma on train
-    print("Computing pseudo-outcomes on train split...")
-    mu1_train = predict_mu(mu1_pilot_model, X_train)
-    mu0_train = predict_mu(mu0_pilot_model, X_train)
-
-    Gamma1_train = mu1_train + (D_train / e_pilot) * (y_train - mu1_train)
-    Gamma0_train = mu0_train + ((1 - D_train) / (1 - e_pilot)) * (y_train - mu0_train)
-    Gamma_train = np.vstack([Gamma0_train, Gamma1_train]).T
-
     # candidate thresholds
-    print("Computing candidate thresholds...")
     d_full = X_pilot.shape[1]
     
     # Generate candidate thresholds (midpoints between unique values)
@@ -289,9 +292,7 @@ def run_dast_dams(
             X_val=X_val,
             D_val=D_val,
             y_val=y_val,
-            mu1_model=mu1_pilot_model,
-            mu0_model=mu0_pilot_model,
-            e=e_pilot,
+            Gamma_val=Gamma_val,
             action=action_M,
         )
         print(f"  DAST M={M} DAMS-score={score_M:.6f}")
@@ -307,7 +308,6 @@ def run_dast_dams(
     print("STEP 6: Fitting final DAST on full pilot")
     print("=" * 60)
 
-    print("Recomputing candidate thresholds on full pilot data...")
     
     tree_final = DASTree(
         x=X_pilot,
@@ -328,55 +328,89 @@ def run_dast_dams(
     return tree_final, seg_labels_pilot, best_M, action_full_pilot
 
 
-from clr import CLRSeg, clr_bic_score
+
 
 def run_clr_segmentation(
     X_pilot,
     D_pilot,
     y_pilot,
-    K_candidates=(2, 3, 4, 5),
-    kmeans_coef=0.1,
-    num_tries=8,
-    random_state=0,
+    M_candidates,
 ):
     best_M = None
     best_score = np.inf
     best_seg = None
     best_labels = None
 
-    for K in K_candidates:
+    for M in M_candidates:
         seg = CLRSeg(
-            n_segments=K,
-            kmeans_coef=kmeans_coef,
-            num_tries=num_tries,
-            random_state=random_state,
+            n_segments=M,
         )
         seg.fit(X_pilot, D_pilot, y_pilot)
         bic = clr_bic_score(seg, X_pilot, D_pilot, y_pilot)
-        print(f"CLR K={K} BIC={bic:.3f}")
+        print(f"CLR M={M} BIC={bic:.3f}")
 
         if bic < best_score and bic > -np.inf:
             best_score = bic
-            best_M = K
+            best_M = M
             best_seg = seg
             best_labels = seg.assign(X_pilot)
 
-    print(f"\n✓ CLR selected K={best_M} with BIC={best_score:.3f}\n")
+    print(f"\n✓ CLR selected M={best_M} with BIC={best_score:.3f}\n")
     return best_seg, best_labels, best_M
 
+def run_clr_dams_segmentation(X_pilot, D_pilot,y_pilot,
+                                X_train, D_train, y_train,
+                                X_val, D_val, y_val,
+                                Gamma_val,
+                              M_candidates, ):
+    print("\n" + "=" * 60)
+    print("CLR_DAMS - selecting optimal K")
+    print("=" * 60)
+    
+
+    
+    best_M = None
+    best_score = -np.inf
+    
+    for M in M_candidates:
+        seg = CLRSeg(
+            n_segments=M,
+        )
+        seg.fit(X_pilot, D_pilot, y_pilot)
+        action = estimate_segment_policy(
+            X_train, y_train, D_train, seg.assign(X_train)
+        )
+
+        score = dams_score(seg_model=seg, X_val=X_val,
+                            D_val=D_val, y_val=y_val,
+                            Gamma_val=Gamma_val,
+                            action=action)
+        print(f"  CLR_DAMS M={M} score={score:.4f}")
+
+        if score > best_score:
+            best_score = score
+            best_M = M
+
+    print(f"\n✓ CLR_DAMS: selected M = {best_M} with score = {best_score:.4f}\n")
+
+    final_seg = CLRSeg(
+        n_segments=best_M,
+    )
+    final_seg.fit(X_pilot, D_pilot, y_pilot)
+    seg_labels_pilot = final_seg.assign(X_pilot)
+
+    return final_seg, seg_labels_pilot, best_M
 
 
 
 def run_mst_dams(
-    X_pilot,
-    D_pilot,
-    y_pilot,
-    mu1_pilot_model,
-    mu0_pilot_model,
-    e_pilot,
-    train_frac=0.7,
-    M_candidates=(2, 3, 4, 5, 6, 7),
-    min_leaf_size=20,
+    X_pilot, D_pilot,y_pilot,
+    X_train, D_train, y_train,
+    X_val, D_val, y_val,
+    Gamma_val,
+    M_candidates,
+    min_leaf_size
+    
 ):
     print("\n" + "=" * 60)
     print("STEP 5 (MST): selecting optimal M via DAMS (residual-based splits)")
@@ -384,22 +418,10 @@ def run_mst_dams(
 
     d = X_pilot.shape[1]
 
-    # --------------------------------------------------
-    # train / val split
-    # --------------------------------------------------
-    print(
-        f"Splitting pilot into train ({train_frac:.0%}) and "
-        f"validation ({1 - train_frac:.0%})..."
-    )
-    (X_train, D_train, y_train), (X_val, D_val, y_val) = split_seg_train_test(
-        X_pilot, D_pilot, y_pilot, test_frac=1 - train_frac
-    )
-    print(f"Train size: {len(X_train)}, Validation size: {len(X_val)}")
 
     # --------------------------------------------------
     # candidate thresholds: 跟 run_dast_dams 一样
     # --------------------------------------------------
-    print("Computing candidate thresholds (MST)...")
     d_full = X_pilot.shape[1]
     bins = 20
     H_full = {}
@@ -457,9 +479,7 @@ def run_mst_dams(
             X_val=X_val,
             D_val=D_val,
             y_val=y_val,
-            mu1_model=mu1_pilot_model,
-            mu0_model=mu0_pilot_model,
-            e=e_pilot,
+            Gamma_val=Gamma_val,
             action=action_M,
         )
         print(f"  MST  M={M} DAMS-score={score_M:.6f}")
@@ -508,10 +528,13 @@ def run_policytree_segmentation(
     X_pilot: np.ndarray,
     D_pilot: np.ndarray,
     y_pilot: np.ndarray,
-    mu1_pilot_model,
-    mu0_pilot_model,
-    e_pilot: float,
-    train_frac: float,
+    X_train: np.ndarray,
+    D_train: np.ndarray,
+    y_train: np.ndarray,
+    X_val: np.ndarray,
+    D_val: np.ndarray,
+    y_val: np.ndarray,
+    Gamma_val,
     M_candidates,
 ):
     """
@@ -541,11 +564,6 @@ def run_policytree_segmentation(
     print("POLICYTREE: selecting M via DAMS (Gamma from R)")
     print("=" * 60)
 
-    # 1) train / val split
-    (X_train, D_train, y_train), (X_val, D_val, y_val) = split_seg_train_test(
-        X_pilot, D_pilot, y_pilot, test_frac=1 - train_frac
-    )
-    print(f"Train size: {len(X_train)}, Validation size: {len(X_val)}")
 
     M_candidates = list(M_candidates)
     print(f"Candidate M's: {M_candidates}")
@@ -589,9 +607,7 @@ def run_policytree_segmentation(
             X_val=X_val,
             D_val=D_val,
             y_val=y_val,
-            mu1_model=mu1_pilot_model,
-            mu0_model=mu0_pilot_model,
-            e=e_pilot,
+            Gamma_val=Gamma_val,
             action=action_M,
         )
         print(f"    DAMS-score(M={M}) = {score_M:.6f}")
@@ -635,4 +651,4 @@ def run_policytree_segmentation(
 
     seg_model_final = PolicyTreeSeg(tree_r_full, leaf_to_pruned_full)
 
-    return seg_model_final, seg_labels_full, target_M_full, action_final
+    return seg_model_final, seg_labels_full, best_M, action_final

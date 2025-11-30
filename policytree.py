@@ -2,9 +2,6 @@
 
 import numpy as np
 
-from data_utils import split_seg_train_test
-from estimation import estimate_segment_policy
-from outcome_model import predict_mu
 
 # rpy2 / R
 import rpy2.robjects as ro
