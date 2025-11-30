@@ -9,12 +9,8 @@ from data_utils import  split_seg_train_test
 from estimation import estimate_segment_policy  
 from clr import CLRSeg, clr_bic_score
 from policytree import PolicyTreeSeg, _fit_policytree_with_grf, policytree_post_prune_tree
+from mst import MSTree
 
-
-# segmentation.py
-import numpy as np
-from sklearn.cluster import KMeans
-from sklearn.mixture import GaussianMixture
 
 
 class BaseSegmentation:
@@ -371,15 +367,6 @@ def run_clr_segmentation(
 
 
 
-# segmentation.py 里，放在 run_dast_dams 附近
-import numpy as np
-from data_utils import split_seg_train_test
-from outcome_model import predict_mu
-from estimation import estimate_segment_policy
-from scoring import dams_score
-from mst import MSTree   # ← 别忘了从你新建的 mst.py 引入
-
-
 def run_mst_dams(
     X_pilot,
     D_pilot,
@@ -414,7 +401,7 @@ def run_mst_dams(
     # --------------------------------------------------
     print("Computing candidate thresholds (MST)...")
     d_full = X_pilot.shape[1]
-    bins = 50
+    bins = 20
     H_full = {}
 
     for j in range(d_full):
@@ -623,7 +610,7 @@ def run_policytree_segmentation(
     # 3) 在 full pilot 上重训一棵 policy tree，并 prune 到 best_M
     print("\nRe-fitting GRF + PolicyTree on FULL pilot ...")
     tree_r_full, Gamma_full, leaf_parent_full, leaf_ids_full, action_ids_full = \
-        _fit_policytree_with_grf(X_pilot, y_pilot, D_pilot, depth=depth)
+        _fit_policytree_with_grf(X_pilot, y_pilot, D_pilot, depth=max(2, int(np.ceil(np.log2(best_M)))))
 
     n_leaves_full = len(np.unique(leaf_ids_full))
     target_M_full = min(best_M, n_leaves_full)
