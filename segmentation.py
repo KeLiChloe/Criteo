@@ -3,7 +3,7 @@ import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.mixture import GaussianMixture
 from outcome_model import predict_mu
-from scoring import dams_score, kmeans_score
+from scoring import dams_score, kmeans_silhouette_score
 from dast import DASTree
 from data_utils import  split_seg_train_test
 from estimation import estimate_segment_policy  
@@ -82,45 +82,97 @@ class GMMSeg(BaseSegmentation):
 # =========================================================
 # 2. KMeans segmentation + K 选择
 # =========================================================
-def run_kmeans_segmentation(X_pilot, D_pilot, y_pilot, K_candidates):
+def run_kmeans_segmentation(X_pilot, M_candidates):
     print("\n" + "=" * 60)
-    print("STEP 4a: KMeans - selecting optimal K")
+    print("KMeans - selecting optimal K")
     print("=" * 60)
 
-    best_K = None
+    best_M = None
     best_score = -np.inf
+    best_seg = None
 
-    for K in K_candidates:
-        seg = KMeansSeg(K)
+    for M in M_candidates:
+        seg = KMeansSeg(M)
         seg.fit(X_pilot)
 
-        score = kmeans_score(seg_model=seg, X_pilot=X_pilot,
-                             D_pilot=D_pilot, y_pilot=y_pilot)
-        print(f"  KMeans K={K} score={score:.4f}")
+        score = kmeans_silhouette_score(seg_model=seg, X_pilot=X_pilot)
+        print(f"  KMeans K={M} score={score:.4f}")
 
         if score > best_score:
             best_score = score
-            best_K = K
+            best_M = M
+            best_seg = seg
 
-    print(f"\n✓ KMeans: selected K = {best_K} with score = {best_score:.4f}\n")
+    print(f"\n✓ KMeans: selected K = {best_M} with score = {best_score:.4f}\n")
+    seg_labels_pilot = best_seg.assign(X_pilot)
+    return best_seg, seg_labels_pilot, best_M
 
-    final_seg = KMeansSeg(best_K)
+def run_kmeans_dams_segmentation(X_pilot, D_pilot, y_pilot, M_candidates, mu1_pilot_model,  mu0_pilot_model, e_pilot, train_frac):
+    print("\n" + "=" * 60)
+    print("KMeans_DAMS - selecting optimal K")
+    print("=" * 60)
+    
+    print(
+        f"Splitting pilot into train ({train_frac:.0%}) and "
+        f"validation ({1 - train_frac:.0%})..."
+    )
+    (X_train, D_train, y_train), (X_val, D_val, y_val) = split_seg_train_test(
+        X_pilot, D_pilot, y_pilot, test_frac=1 - train_frac
+    )
+    print(f"Train size: {len(X_train)}, Validation size: {len(X_val)}")
+    
+    # Gamma on train
+    print("Computing pseudo-outcomes on train split...")
+    mu1_train = predict_mu(mu1_pilot_model, X_train)
+    mu0_train = predict_mu(mu0_pilot_model, X_train)
+
+    Gamma1_train = mu1_train + (D_train / e_pilot) * (y_train - mu1_train)
+    Gamma0_train = mu0_train + ((1 - D_train) / (1 - e_pilot)) * (y_train - mu0_train)
+    Gamma_train = np.vstack([Gamma0_train, Gamma1_train]).T
+    
+    best_M = None
+    best_score = -np.inf
+
+    for M in M_candidates:
+        seg = KMeansSeg(M)
+        seg.fit(X_train)
+        action = estimate_segment_policy(
+            X_train, y_train, D_train, seg.assign(X_train)
+        )
+
+        score = dams_score(seg_model=seg, X_val=X_val,
+                           D_val=D_val, y_val=y_val,
+                           mu1_model=mu1_pilot_model,
+                           mu0_model=mu0_pilot_model,
+                           e=e_pilot,
+                           action=action)
+        print(f"  KMeans_DAMS M={M} score={score:.4f}")
+
+        if score > best_score:
+            best_score = score
+            best_M = M
+
+    print(f"\n✓ KMeans_DAMS: selected M = {best_M} with score = {best_score:.4f}\n")
+
+    final_seg = KMeansSeg(best_M)
     final_seg.fit(X_pilot)
     seg_labels_pilot = final_seg.assign(X_pilot)
 
-    return final_seg, seg_labels_pilot, best_K
+    return final_seg, seg_labels_pilot, best_M
+
 
 
 # =========================================================
 # 3. GMM segmentation + BIC 选 K
 # =========================================================
-def run_gmm_segmentation(X_pilot, D_pilot, y_pilot, K_candidates):
+def run_gmm_segmentation(X_pilot, K_candidates):
     print("\n" + "=" * 60)
     print("STEP 4b: GMM - selecting optimal K via BIC")
     print("=" * 60)
 
-    best_K = None
+    best_M = None
     best_bic = np.inf
+    best_seg = None
 
     for K in K_candidates:
         seg = GMMSeg(K)
@@ -131,15 +183,12 @@ def run_gmm_segmentation(X_pilot, D_pilot, y_pilot, K_candidates):
 
         if bic < best_bic:
             best_bic = bic
-            best_K = K
+            best_M = K
+            best_seg = seg
 
-    print(f"\n✓ GMM: selected K = {best_K} with BIC = {best_bic:.1f}\n")
-
-    final_seg = GMMSeg(best_K)
-    final_seg.fit(X_pilot)
-    seg_labels_pilot = final_seg.assign(X_pilot)
-
-    return final_seg, seg_labels_pilot, best_K
+    print(f"\n✓ GMM: selected K = {best_M} with BIC = {best_bic:.1f}\n")
+    seg_labels_pilot = best_seg.assign(X_pilot)
+    return best_seg, seg_labels_pilot, best_M
 
 
 # =========================================================
@@ -294,7 +343,7 @@ def run_clr_segmentation(
     num_tries=8,
     random_state=0,
 ):
-    best_K = None
+    best_M = None
     best_score = np.inf
     best_seg = None
     best_labels = None
@@ -312,12 +361,12 @@ def run_clr_segmentation(
 
         if bic < best_score and bic > -np.inf:
             best_score = bic
-            best_K = K
+            best_M = K
             best_seg = seg
             best_labels = seg.assign(X_pilot)
 
-    print(f"\n✓ CLR selected K={best_K} with BIC={best_score:.3f}\n")
-    return best_seg, best_labels, best_K
+    print(f"\n✓ CLR selected K={best_M} with BIC={best_score:.3f}\n")
+    return best_seg, best_labels, best_M
 
 
 
