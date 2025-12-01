@@ -376,7 +376,7 @@ def run_clr_dams_segmentation(X_pilot, D_pilot,y_pilot,
         seg = CLRSeg(
             n_segments=M,
         )
-        seg.fit(X_pilot, D_pilot, y_pilot)
+        seg.fit(X_train, D_train, y_train)
         action = estimate_segment_policy(
             X_train, y_train, D_train, seg.assign(X_train)
         )
