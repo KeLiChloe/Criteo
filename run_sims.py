@@ -24,12 +24,12 @@ from segmentation import (
 
 import time  
 
-# ALGO_LIST = [ "policytree", "dast", "mst", "clr", "clr_dams", "kmeans","kmeans_dams", "gmm", "gmm_dams"] 
-ALGO_LIST = [ "kmeans","kmeans_dams", "gmm", "gmm_dams", "clr", "clr_dams", "dast", ] 
+ALGO_LIST = [ "policytree", "dast", "mst", "clr", "kmeans", "gmm"] 
+# ALGO_LIST = [ "kmeans","kmeans_dams", "gmm", "gmm_dams", "dast", ] 
 
 
 
-M_candidates = [2, 3, 4, 5, 6]
+M_candidates = [2, 3, 4, 5, 6, 7, 8]
 # good seed: 380776, 458676
 
 def run_single_experiment(sample_frac, pilot_frac):
@@ -447,12 +447,12 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    pilot_frac = 0.5  # 50% data for pilot
+    pilot_frac = 0.2  # 50% data for pilot
     train_frac = 0.7  # 70% pilot for training
     
     run_multiple_experiments(
-        N_sim=10,
-        sample_frac=0.005,
+        N_sim=100,
+        sample_frac=0.05,
         pilot_frac=pilot_frac,
         out_path=args.outpath,
     )

@@ -9,6 +9,7 @@ but只做“分段”：建树 + 剪枝到 M 个叶子 + 返回 segment_id。
 - 候选阈值: H = {H_j}_j, H_j 是 feature j 上的候选 split points
 """
 
+import copy
 import numpy as np
 
 
@@ -98,6 +99,8 @@ class DASTree:
         """Build full tree (Algorithm 1)."""
         all_indices = np.arange(self.x.shape[0])
         self.root = self._grow_node(all_indices, depth=0)
+    def copy(self):
+        return copy.deepcopy(self)
 
     def prune_to_M(self, M: int):
         """

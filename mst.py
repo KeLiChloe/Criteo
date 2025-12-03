@@ -1,5 +1,6 @@
 # mst.py
 
+import copy
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
@@ -121,6 +122,9 @@ class MSTree:
         N = self.x.shape[0]
         all_indices = np.arange(N)
         self.root = self._grow_node(all_indices, depth=0)
+    
+    def copy(self):
+        return copy.deepcopy(self)
 
     def prune_to_M(self, M: int):
         """
@@ -135,7 +139,7 @@ class MSTree:
         # 如果一开始叶子少于 M，就直接返回（和你现在 DAST 版本一致的宽松做法）
         if len(current_leaves) <= M:
            print(f"Warning: current leaf count {len(current_leaves)} <= target M={M}. No pruning performed.")
-           
+
         while len(current_leaves) > M:
             prunable_nodes = self._get_internal_nodes_with_leaf_children()
             if not prunable_nodes:
