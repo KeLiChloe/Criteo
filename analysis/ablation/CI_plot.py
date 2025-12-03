@@ -7,6 +7,9 @@ from scipy import stats
 from matplotlib.lines import Line2D
 import warnings
 
+with open("exp_results/ablation/exp2.pkl", "rb") as f:
+    data_exp = pickle.load(f)
+    
 # 忽略不必要的警告
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -27,13 +30,8 @@ plt.rcParams.update({
     'figure.dpi': 300
 })
 
-academic_colors = ['#FF6B6B', '#4ECDC4', "#7F8893", '#C7F464', '#FFCC5C', "#79CBFB",  "#DA7BFF", "#FFB39A"]
+academic_colors = ['#FF6B6B', '#4ECDC4', "#7F8893", "#9BE200", '#FFCC5C', "#79CBFB",  "#DA7BFF", "#FFB39A"]
 
-# ==========================================
-# 2. 数据加载与处理
-# ==========================================
-with open("exp_results/Legion/ablation/exp1.pkl", "rb") as f:
-    data_exp = pickle.load(f)
 
 # 获取参数
 if "params" in data_exp:
@@ -48,7 +46,7 @@ else:
 n_sims = len(results_list)
 
 
-baselines = ['kmeans', 'kmeans_dams', 'gmm', 'gmm_dams','clr', 'clr_dams']  # 'mst' 可选
+baselines = ['gmm', 'gmm_dams', 'kmeans', 'kmeans_dams', 'clr', 'clr_dams']  # 'mst' 可选
 target = 'dast'
 records = []
 raw_data_map = {m: [] for m in baselines + [target]}
@@ -130,10 +128,10 @@ for i, row in stats_df.iterrows():
 
 ytick_labels = [f"{row['Label']}" + (f" ({row['P_Star']})" if row['P_Star'] is not None else '') for _, row in stats_df.iterrows()]
 ax.set_yticks(y_pos)
-ax.set_yticklabels(ytick_labels, fontweight='bold', fontsize=14)
+ax.set_yticklabels(ytick_labels, fontweight='bold', fontsize=14,  rotation=30,)
 ax.tick_params(axis='y', length=0)
 
-# 0% 基准线
+# 0% 基准
 ax.axvline(0, color="#183BD8", linestyle='--', linewidth=1.6, alpha=0.8)
 
 # 【关键修改 2】：基准线文字标注
@@ -152,7 +150,7 @@ sns.despine(left=True, top=True, right=True)
 # 1. 调整主标题位置
 # y=1.12: 将标题垂直位置手动设定在轴上方 1.12 倍处 (您可以根据需要微调这个数字，比如 1.15)
 # pad=...: pad 参数此时主要影响标题边框(如果有)的间距，有了 y 参数后，位置主要由 y 决定
-ax.set_title(f'Averaged DAST Improvement (%) with 95% CI (Runs={n_sims})', 
+ax.set_title(f'Averaged DAST Improvement (%) on Profits with 95% CI (Runs={n_sims})', 
              fontweight='bold', 
              pad=20,          # 如果用了 y，pad 可以稍微改小或者保持，主要靠 y 控制绝对位置
              fontsize=16, 
@@ -175,14 +173,14 @@ legend_handles = [
     Line2D([0], [0], color='none', label='*** p < 0.001\n**   p < 0.01\n*     p < 0.05'),
     Line2D([0], [0], color='#183BD8', linestyle='--', linewidth=1.6, label='No Improvement (0%)')
 ]
-ax.legend(handles=legend_handles, 
-          loc='best', # 自动寻找最佳位置
-          frameon=True, 
-          framealpha=0.95, 
-          edgecolor='#E0E0E0', 
-          fancybox=False,      
-          fontsize=11,
-          borderpad=1)
+# ax.legend(handles=legend_handles, 
+#           loc='best',
+#           frameon=True, 
+#           framealpha=0.95, 
+#           edgecolor='#E0E0E0', 
+#           fancybox=False,      
+#           fontsize=11,
+#           borderpad=1)
 
 plt.tight_layout()
 
