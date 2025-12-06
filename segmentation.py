@@ -435,7 +435,7 @@ def run_mst_dams(
     # candidate thresholds: 跟 run_dast_dams 一样
     # --------------------------------------------------
     d_full = X_pilot.shape[1]
-    bins = 20
+    bins = 100
     H_full = {}
 
     for j in range(d_full):
